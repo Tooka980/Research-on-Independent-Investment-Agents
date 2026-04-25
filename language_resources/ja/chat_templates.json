@@ -1,0 +1,12 @@
+{
+  "grounded_summary": [
+    "{symbol} は {evidence_count} 件のEvidenceを参照しています。{market_state}。{risk_summary}。",
+    "{symbol} の説明は保存済みEvidenceに限定します。{market_state}。リスク観点は {risk_summary} です。",
+    "{symbol}: 現在の回答は {evidence_count} 件の根拠から構成しています。{market_state}。"
+  ],
+  "missing_evidence": [
+    "{symbol}: 根拠が不足しています。回答より先に追加調査タスクを作成します。",
+    "{symbol}: Evidenceが揃っていないため、推測せず確認待ちにします。",
+    "{symbol}: 未確認情報があるため、現時点では判断を保留します。"
+  ]
+}

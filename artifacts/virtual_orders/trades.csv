@@ -1,0 +1,2 @@
+execution_id,order_id,symbol,side,quantity,execution_price,commission,slippage,executed_at,simulation_rule
+vexec-687e7bd2ee51487f8564b4720432e315,vord-643a7eec8f564a0cb3ba0c3503950cf1,6758.T,buy,3,3369.0,5.05,2.02,2026-04-24T13:22:19.495236+00:00,simulated_market_close_fill

@@ -1,0 +1,24 @@
+2026-04-24 17:03:26,937 ERROR yfinance $1321.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:26,940 ERROR yfinance $1570.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:26,942 ERROR yfinance $1306.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:26,945 ERROR yfinance $7203.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:26,948 ERROR yfinance $6758.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:26,948 ERROR yfinance 
+5 Failed downloads:
+2026-04-24 17:03:26,948 ERROR yfinance ['1321.T', '1570.T', '1306.T', '7203.T', '6758.T']: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:27,814 ERROR yfinance $1321.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:27,817 ERROR yfinance $1570.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:27,819 ERROR yfinance $1306.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:27,821 ERROR yfinance $7203.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:27,823 ERROR yfinance $6758.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:27,823 ERROR yfinance 
+5 Failed downloads:
+2026-04-24 17:03:27,823 ERROR yfinance ['1321.T', '1570.T', '1306.T', '7203.T', '6758.T']: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:28,172 ERROR yfinance $1321.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:28,174 ERROR yfinance $1570.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:28,176 ERROR yfinance $1306.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:28,178 ERROR yfinance $7203.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:28,180 ERROR yfinance $6758.T: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)
+2026-04-24 17:03:28,181 ERROR yfinance 
+5 Failed downloads:
+2026-04-24 17:03:28,181 ERROR yfinance ['1321.T', '1570.T', '1306.T', '7203.T', '6758.T']: possibly delisted; no price data found  (1d 2000-01-01 -> 2026-04-25)

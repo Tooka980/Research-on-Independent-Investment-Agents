@@ -1,0 +1,343 @@
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 49895)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+    self._send_json(self.dashboard_service.build_dashboard_payload())
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+    profile_map = self._profile_map(watch_symbols + position_symbols, state)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+    fetched = self._cached(
+              ^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+    value = loader()
+            ^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+    lambda: [item.model_dump() for item in self.company_provider.fetch_profiles(missing)],
+             ^^^^^^^^^^^^^^^
+AttributeError: 'CompanyProfile' object has no attribute 'model_dump'
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 52720)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+    self._send_json(self.dashboard_service.build_dashboard_payload())
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+    profile_map = self._profile_map(watch_symbols + position_symbols, state)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+    fetched = self._cached(
+              ^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+    value = loader()
+            ^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+    lambda: [item.model_dump() for item in self.company_provider.fetch_profiles(missing)],
+             ^^^^^^^^^^^^^^^
+AttributeError: 'CompanyProfile' object has no attribute 'model_dump'
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 65405)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 732, in _request_once
+    c.perform()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\curl.py", line 505, in perform
+    self._check_error(ret, "perform")
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\curl.py", line 269, in _check_error
+    raise error
+curl_cffi.curl.CurlError: Failed to perform, curl: (6) Could not resolve host: query2.finance.yahoo.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+    self._send_json(self.dashboard_service.build_dashboard_payload())
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+    profile_map = self._profile_map(watch_symbols + position_symbols, state)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+    fetched = self._cached(
+              ^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+    value = loader()
+            ^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+    lambda: [item.model_dump() for item in self.company_provider.fetch_profiles(missing)],
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\data\providers.py", line 78, in fetch_profiles
+    info = ticker.info or {}
+           ^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\ticker.py", line 159, in info
+    return self.get_info()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\base.py", line 282, in get_info
+    data = self._quote.info
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 505, in info
+    self._fetch_info()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 620, in _fetch_info
+    result = self._fetch(modules=modules)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 596, in _fetch
+    result = self._data.get_raw_json(_QUOTE_SUMMARY_URL_ + f"/{self._symbol}", params=params_dict)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 462, in get_raw_json
+    response = self.get(url, params=params, timeout=timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\utils.py", line 95, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 375, in get
+    response = self._make_request(url, request_method = self._session.get, params=params, timeout=timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\utils.py", line 95, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 430, in _make_request
+    response = request_method(**request_args)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 842, in get
+    return self.request(method="GET", url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 795, in request
+    return self._request_once(
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 739, in _request_once
+    raise error(str(e), e.code, rsp) from e
+curl_cffi.requests.exceptions.DNSError: Failed to perform, curl: (6) Could not resolve host: query2.finance.yahoo.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 63102)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 732, in _request_once
+    c.perform()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\curl.py", line 505, in perform
+    self._check_error(ret, "perform")
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\curl.py", line 269, in _check_error
+    raise error
+curl_cffi.curl.CurlError: Failed to perform, curl: (6) Could not resolve host: query2.finance.yahoo.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+    self._send_json(self.dashboard_service.build_dashboard_payload())
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+    profile_map = self._profile_map(watch_symbols + position_symbols, state)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+    fetched = self._cached(
+              ^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+    value = loader()
+            ^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+    lambda: [item.model_dump() for item in self.company_provider.fetch_profiles(missing)],
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\data\providers.py", line 78, in fetch_profiles
+    info = ticker.info or {}
+           ^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\ticker.py", line 159, in info
+    return self.get_info()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\base.py", line 282, in get_info
+    data = self._quote.info
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 505, in info
+    self._fetch_info()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 620, in _fetch_info
+    result = self._fetch(modules=modules)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 596, in _fetch
+    result = self._data.get_raw_json(_QUOTE_SUMMARY_URL_ + f"/{self._symbol}", params=params_dict)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 462, in get_raw_json
+    response = self.get(url, params=params, timeout=timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\utils.py", line 95, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 375, in get
+    response = self._make_request(url, request_method = self._session.get, params=params, timeout=timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\utils.py", line 95, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 430, in _make_request
+    response = request_method(**request_args)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 842, in get
+    return self.request(method="GET", url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 795, in request
+    return self._request_once(
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 739, in _request_once
+    raise error(str(e), e.code, rsp) from e
+curl_cffi.requests.exceptions.DNSError: Failed to perform, curl: (6) Could not resolve host: query2.finance.yahoo.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 56171)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 732, in _request_once
+    c.perform()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\curl.py", line 505, in perform
+    self._check_error(ret, "perform")
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\curl.py", line 269, in _check_error
+    raise error
+curl_cffi.curl.CurlError: Failed to perform, curl: (6) Could not resolve host: query2.finance.yahoo.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+    self._send_json(self.dashboard_service.build_dashboard_payload())
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+    profile_map = self._profile_map(watch_symbols + position_symbols, state)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+    fetched = self._cached(
+              ^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+    value = loader()
+            ^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+    lambda: [item.model_dump() for item in self.company_provider.fetch_profiles(missing)],
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\data\providers.py", line 78, in fetch_profiles
+    info = ticker.info or {}
+           ^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\ticker.py", line 159, in info
+    return self.get_info()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\base.py", line 282, in get_info
+    data = self._quote.info
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 505, in info
+    self._fetch_info()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 620, in _fetch_info
+    result = self._fetch(modules=modules)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\scrapers\quote.py", line 596, in _fetch
+    result = self._data.get_raw_json(_QUOTE_SUMMARY_URL_ + f"/{self._symbol}", params=params_dict)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 462, in get_raw_json
+    response = self.get(url, params=params, timeout=timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\utils.py", line 95, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 375, in get
+    response = self._make_request(url, request_method = self._session.get, params=params, timeout=timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\utils.py", line 95, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\yfinance\data.py", line 430, in _make_request
+    response = request_method(**request_args)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 842, in get
+    return self.request(method="GET", url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 795, in request
+    return self._request_once(
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages\curl_cffi\requests\session.py", line 739, in _request_once
+    raise error(str(e), e.code, rsp) from e
+curl_cffi.requests.exceptions.DNSError: Failed to perform, curl: (6) Could not resolve host: query2.finance.yahoo.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 60063)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+AttributeError: 'CompanyProfile' object has no attribute 'model_dump'
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 61843)
+Traceback (most recent call last):
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Reito\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 693, in do_GET
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 525, in build_dashboard_payload
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 346, in _profile_map
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 283, in _cached
+  File "C:\Users\Reito\OneDrive\デスクトップ\Research on Independent Investment Agents\src\independent_investment_agents\app\web_dashboard.py", line 349, in <lambda>
+AttributeError: 'CompanyProfile' object has no attribute 'model_dump'
+----------------------------------------
