@@ -1,16 +1,21 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # Logs
 *.log
 artifacts/
 
-# Data cache
+# Cache
 data/cache/
 
-# Database
+# DB
 *.sqlite3
+
+# Env
+.env
 
 # OS
 .DS_Store
