@@ -60,26 +60,6 @@ const DEMO = {
   sharedTradingContext: {},
 };
 
-const AGENT_DEFINITIONS = [
-  ["data-agent", "Data Agent"],
-  ["market-agent", "Market Agent"],
-  ["news-agent", "News Agent"],
-  ["analysis-agent", "Analysis Agent"],
-  ["strategy-agent", "Strategy Agent"],
-  ["virtual-order-agent", "Virtual Order Agent"],
-  ["portfolio-agent", "Portfolio Agent"],
-  ["ui-agent", "UI Agent"],
-];
-
-const AGENT_STATUS_LABELS = {
-  idle: "idle",
-  running: "running",
-  success: "success",
-  warning: "warning",
-  error: "error",
-  offline: "offline",
-};
-
 function clsFor(value) {
   return Number(value) >= 0 ? "positive" : "negative";
 }
@@ -133,131 +113,42 @@ function buildClockSnapshot() {
   return { utc, jst, marketOpen: open, marketLabel: open ? "TSE 市場中" : "TSE 閉場中" };
 }
 
-function applyStreamTick(payload, tick) {
-  if (!payload || !tick) return payload;
-  const driftFor = (symbol, scale = 1) => {
-    const seed = symbol.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-    return Math.sin((tick + seed) * 0.41) * 0.0009 * scale;
-  };
-  const updateQuote = (symbol, quote = {}) => {
-    const current = Number(quote.current || 0);
-    if (!current) return quote;
-    const drift = driftFor(symbol);
-    const next = Math.max(1, current * (1 + drift));
-    const previous = Number(quote.previousClose || current);
-    return {
-      ...quote,
-      current: next,
-      close: next,
-      change: next - previous,
-      changePct: previous ? ((next - previous) / previous) * 100 : 0,
-      volume: Math.max(0, Number(quote.volume || 0) + Math.round(Math.abs(drift) * 2500000)),
-    };
-  };
-  const updateSeries = (series = [], symbol) => series.map((item, idx) => {
-    if (idx !== series.length - 1) return item;
-    const next = Number(item.value || item.close || 0) * (1 + driftFor(symbol, 0.7));
-    return item.value !== undefined ? { ...item, value: next } : { ...item, close: next };
-  });
-  const tickerTape = (payload.tickerTape || []).map((item) => {
-    const quote = updateQuote(item.symbol, { current: item.current, previousClose: item.current - (item.change || 0) });
-    return { ...item, current: quote.current, change: quote.change, changePct: quote.changePct, sparkline: updateSeries(item.sparkline, item.symbol) };
-  });
-  const watchlist = (payload.watchlist || []).map((item) => {
-    const quote = updateQuote(item.symbol, { current: item.current, previousClose: item.current / (1 + Number(item.changePct || 0) / 100) });
-    return { ...item, current: quote.current, changePct: quote.changePct, sparkline: updateSeries(item.sparkline, item.symbol) };
-  });
-  const focus = payload.marketDesk ? {
-    ...payload.marketDesk,
-    quote: updateQuote(payload.marketDesk.symbol, payload.marketDesk.quote),
-    sparkline: updateSeries(payload.marketDesk.sparkline, payload.marketDesk.symbol),
-  } : payload.marketDesk;
-  return { ...payload, tickerTape, watchlist, marketDesk: focus };
-}
-
-function timeStamp() {
-  return new Date().toLocaleTimeString("ja-JP", { hour12: false });
-}
-
-function agentCode(id) {
-  return String(id || "agent").toUpperCase().replace(/-/g, "_");
-}
-
-function agentPlan(id, context) {
-  const focus = context.focus || {};
-  const quote = focus.quote || {};
-  const news = (context.intelligenceFeed || [])[0]?.title || "news queue";
-  const map = {
-    "data-agent": [`fetch_price("${focus.symbol || "N/A"}")`, `${focus.symbol || "銘柄"} の価格 ${yen.format(quote.current || 0)} を正規化`],
-    "market-agent": ["clock_tick()", `${context.clock?.marketLabel || "TSE"} / heartbeat更新`],
-    "news-agent": [`fetch_news("${focus.symbol || "N/A"}")`, `ニュース確認: ${news}`],
-    "analysis-agent": ["compute_full_history_analysis()", (focus.analysis || ["全期間分析を更新"])[0]],
-    "strategy-agent": ["emit_strategy_output()", context.strategyOutput?.tomorrow || "次回観測点を更新"],
-    "virtual-order-agent": ["process_virtual_order_queue()", context.virtualOrderDesk?.summary?.latestStatus || "仮想注文キューを確認"],
-    "portfolio-agent": ["mark_to_market()", `総資産 ${yen.format(context.summary?.equity || 0)} / 含み損益 ${formatSignedYen(context.summary?.openPnl || 0)}`],
-    "ui-agent": ["sync_ui_state()", `FOCUS ${focus.symbol || "N/A"} / range ${context.rangeKey}`],
-  };
-  const [command, message] = map[id] || ["heartbeat()", "状態を更新"];
-  return { command, message };
-}
-
 function buildAgentHealthSnapshot(previousAgents, context) {
   const previous = new Map((previousAgents || []).map((agent) => [agent.id, agent]));
-  const server = new Map((context.processStatus || []).map((agent) => [agent.id || agent.label, agent]));
-  const stamp = timeStamp();
-  const nowIso = new Date().toISOString();
-  return AGENT_DEFINITIONS.map(([id, label]) => {
+  const runtime = (context.processStatus?.length ? context.processStatus : context.agentRuntime) || [];
+  const apiAge = context.lastApiSuccessAt ? Math.floor((Date.now() - context.lastApiSuccessAt) / 1000) : 999;
+  return runtime.map((remote) => {
+    const id = remote.agent_id || remote.id || remote.label_en || remote.label_ja || remote.label;
     const prev = previous.get(id) || {};
-    const remote = server.get(id) || server.get(label) || {};
-    const plan = agentPlan(id, context);
-    let status = remote.status || "running";
-    if (!AGENT_STATUS_LABELS[status]) status = "running";
-    let warningCount = Number(remote.warningCount || prev.warningCount || 0);
-    let errorCount = Number(remote.errorCount || prev.errorCount || 0);
-    if (context.apiFailures >= 3 && ["data-agent", "news-agent"].includes(id)) {
-      status = "warning";
-      warningCount += 1;
-    }
-    if (context.apiFailures >= 5 && id === "data-agent") {
-      status = "error";
-      errorCount += 1;
-    }
-    if (context.fallbackMode && ["data-agent", "news-agent"].includes(id)) {
-      status = "warning";
-      warningCount += 1;
-    }
-    const apiAge = context.lastApiSuccessAt ? Math.floor((Date.now() - context.lastApiSuccessAt) / 1000) : 999;
-    if (apiAge >= 60 && ["data-agent", "news-agent", "analysis-agent", "strategy-agent"].includes(id)) {
-      status = "error";
-      errorCount += 1;
-    } else if (apiAge >= 30 && ["data-agent", "news-agent", "analysis-agent", "strategy-agent"].includes(id)) {
-      status = "warning";
-      warningCount += 1;
-    }
-    const terminalLine = `[${stamp}] ${agentCode(id)} > ${plan.command}`;
-    const logLine = `[${stamp}] ${plan.message}`;
-    const remoteLogs = (remote.logs || []).slice(-3);
-    const remoteTerminal = (remote.terminal || []).slice(-3);
-    const logs = [...(prev.logs || []), ...remoteLogs, logLine].slice(-50);
-    const terminal = [...(prev.terminal || []), ...remoteTerminal, terminalLine].slice(-50);
-    const successCount = Number(prev.successCount || remote.successCount || 0) + (status === "error" ? 0 : 1);
+    const status = remote.status || "idle";
+    const logs = (remote.logs || prev.logs || []).slice(-50);
+    const terminal = [
+      `${String(id || "agent").toUpperCase().replace(/-/g, "_")} > ${remote.latest_task || remote.latestTask || "runtime_idle"}`,
+      ...logs,
+    ].slice(-50);
     return {
       id,
-      label: remote.label || label,
+      label: remote.label_ja && remote.label_en ? `${remote.label_ja} / ${remote.label_en}` : (remote.label || id),
       status,
-      statusLabel: remote.statusLabel || status,
-      lastRunAt: nowIso,
-      heartbeatAt: nowIso,
-      heartbeatAge: apiAge,
-      latestTask: remote.latestTask || plan.command,
-      successCount,
-      warningCount,
-      errorCount,
-      progress: remote.progress || (status === "warning" ? 72 : status === "error" ? 44 : 90),
-      dataSuccessRate: context.apiFailures ? Math.max(0.35, 1 - context.apiFailures * 0.1) : 1,
-      newsSuccessRate: id === "news-agent" && context.fallbackMode ? 0.68 : 1,
+      statusLabel: remote.role || remote.company || remote.statusLabel || status,
+      lastRunAt: remote.last_run_at || remote.lastRunAt,
+      heartbeatAt: remote.heartbeat_at || remote.heartbeatAt,
+      heartbeatAge: remote.heartbeatAgeSeconds ?? remote.heartbeat_age_seconds ?? apiAge,
+      currentTask: remote.currentTask ?? remote.current_task ?? null,
+      latestTask: remote.latest_task || remote.latestTask || remote.currentTask || remote.current_task || "runtime_idle",
+      lastError: remote.lastError ?? remote.last_error ?? null,
+      lastErrorMessage: remote.lastErrorMessage || remote.last_error?.message || remote.last_error?.error_type || "",
+      restartCount: remote.restartCount ?? remote.restart_count ?? 0,
+      queuedTaskCount: remote.queuedTaskCount ?? remote.queued_task_count ?? remote.queue_depth ?? 0,
+      activeTaskCount: remote.activeTaskCount ?? remote.active_task_count ?? 0,
+      successCount: remote.completed_task_count || remote.successCount || 0,
+      warningCount: remote.warningCount ?? (status === "warning" ? 1 : 0),
+      errorCount: remote.errorCount ?? (status === "error" ? 1 : 0),
+      progress: remote.progress ?? (status === "success" ? 100 : status === "running" ? 82 : status.startsWith("waiting") ? 42 : status === "blocked" ? 25 : 60),
+      dataSuccessRate: remote.dataSuccessRate ?? (status === "blocked" || status === "waiting_for_data" ? 0 : 1),
+      newsSuccessRate: remote.newsSuccessRate ?? 1,
       logs,
-      terminal,
+      terminal: remote.terminal || terminal,
     };
   });
 }
@@ -272,7 +163,10 @@ function buildAgentNarrative(focus, summary, intelligenceFeed, clock, strategyOu
   const marketMode = clock.marketOpen ? "市場監視モード" : "閉場後分析モード";
   const latestLog = (agents || []).flatMap((agent) => agent.logs || []).slice(-1)[0] || "Agent heartbeat更新中";
   const strategy = strategyOutput?.tomorrow || "次回観測点を更新中";
-  return `${focus?.jpName || focus?.symbol}を参照中。現在時刻 JST ${clock.jst.split(" ").pop()}、${marketMode}です。\n\n短期では${pressure}で、直近変動は ${formatPct(q.changePct)}。${rangeLine}。\n\n出来高は平均比 ${volumeRatio ? number.format(volumeRatio) : "算出中"}x。最新材料は「${news}」。ポートフォリオ含み損益は ${formatSignedYen(summary.openPnl || 0)}。\n\nSTRATEGY OUTPUT: ${strategy}\n直近ログ: ${latestLog}\n\n推奨ではなく観察ポイントとして、出来高回復、寄り付きギャップ、保有根拠の変化を重点確認します。`;
+  const refs = strategyOutput?.evidenceRefs || [];
+  const missing = strategyOutput?.missingInformation || [];
+  const grounding = refs.length ? `根拠: ${refs.slice(0, 4).join(", ")}` : `根拠不足: ${missing.join(", ") || "evidence_refsなし"}`;
+  return `${focus?.jpName || focus?.symbol}を参照中。現在時刻 JST ${clock.jst.split(" ").pop()}、${marketMode}です。\n\n短期では${pressure}で、直近変動は ${formatPct(q.changePct)}。${rangeLine}。\n\n出来高は平均比 ${volumeRatio ? number.format(volumeRatio) : "算出中"}x。最新材料は「${news}」。ポートフォリオ含み損益は ${formatSignedYen(summary.openPnl || 0)}。\n\nSTRATEGY OUTPUT: ${strategy}\n${grounding}\n直近ログ: ${latestLog}\n\n推奨ではなく観察ポイントとして、出来高回復、寄り付きギャップ、保有根拠の変化を重点確認します。`;
 }
 
 function pathFromPoints(items, xKey, yKey, width, height, pad = 18) {
@@ -359,7 +253,7 @@ function CandleChart({ candles = [] }) {
       })}
       <line x1={pad.left} x2={width-pad.right} y1={y(rows[rows.length-1]?.close || max)} y2={y(rows[rows.length-1]?.close || max)} stroke="rgba(241,191,115,.42)" strokeDasharray="2 4" />
       <text x={width - 62} y={y(rows[rows.length-1]?.close || max) + 4} fill="#f1bf73" fontFamily="monospace" fontSize="13">{number.format(rows[rows.length-1]?.close || 0)}</text>
-      <text x="30" y={height - 20} fill="#63605b" fontFamily="monospace" fontSize="13">data: yfinance / cached fallback</text>
+      <text x="30" y={height - 20} fill="#63605b" fontFamily="monospace" fontSize="13">data: yfinance / saved history / unavailable</text>
       {hover && (
         <g className="chart-crosshair">
           <line x1={hover.x} x2={hover.x} y1={pad.top} y2={height - pad.bottom} stroke="rgba(231,231,224,.28)" strokeDasharray="3 5" />
@@ -406,17 +300,15 @@ function App() {
   const [positionView, setPositionView] = useState("table");
   const [agentPulse, setAgentPulse] = useState(3);
   const [clock, setClock] = useState(buildClockSnapshot());
-  const [streamTick, setStreamTick] = useState(0);
   const [capitalInput, setCapitalInput] = useState("");
   const [capitalAdjustment, setCapitalAdjustment] = useState(0);
   const [lastNewsRefresh, setLastNewsRefresh] = useState(null);
   const [intelligenceItems, setIntelligenceItems] = useState([]);
   const [agents, setAgents] = useState([]);
   const [apiFailures, setApiFailures] = useState(0);
-  const [fallbackMode, setFallbackMode] = useState(false);
-  const [cachePreviewMode, setCachePreviewMode] = useState(false);
+  const [sourceWaitMode, setSourceWaitMode] = useState(false);
   const [symbolInput, setSymbolInput] = useState("");
-  const [watchlistSymbols, setWatchlistSymbols] = useState(["7203.T", "6758.T", "9984.T", "6861.T", "9983.T", "8306.T", "7974.T", "8035.T"]);
+  const [watchlistSymbols, setWatchlistSymbols] = useState([]);
   const [confirmAction, setConfirmAction] = useState(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [restartNonce, setRestartNonce] = useState(0);
@@ -431,22 +323,19 @@ function App() {
     const loadDashboard = () => {
       setLoading(true);
       setAgentPulse(1);
-      const watchlistParam = watchlistSymbols.join(",");
-      if (cachePreviewMode) {
-        setData((prev) => ({ ...DEMO, ...prev, generatedAt: new Date().toISOString() }));
-        setFallbackMode(true);
-        setLoading(false);
-        timer = window.setTimeout(loadDashboard, 9000);
-        return;
-      }
-      fetch(`/api/dashboard?symbol=${encodeURIComponent(focusSymbol)}&range=${encodeURIComponent(rangeKey)}&watchlist=${encodeURIComponent(watchlistParam)}`, { cache: "no-store" })
+      const query = new URLSearchParams({ symbol: focusSymbol, range: rangeKey });
+      if (watchlistSymbols.length) query.set("watchlist", watchlistSymbols.join(","));
+      fetch(`/api/dashboard?${query.toString()}`, { cache: "no-store" })
         .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
         .then((payload) => {
           if (!active) return;
           setData(payload);
           setApiFailures(0);
-          setFallbackMode(false);
+          setSourceWaitMode(false);
           setLastApiSuccessAt(Date.now());
+          if (!watchlistSymbols.length && payload.watchlist?.length) {
+            setWatchlistSymbols(payload.watchlist.map((item) => item.symbol).filter(Boolean));
+          }
           const now = Date.now();
           if (!newsRefreshRef.current || now - newsRefreshRef.current >= 30000) {
             newsRefreshRef.current = now;
@@ -461,7 +350,7 @@ function App() {
           setData((prev) => ({ ...DEMO, ...prev }));
           setApiFailures((value) => {
             const next = value + 1;
-            if (next >= 5) setFallbackMode(true);
+            if (next >= 5) setSourceWaitMode(true);
             return next;
           });
           setLoading(false);
@@ -473,7 +362,7 @@ function App() {
       active = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [focusSymbol, rangeKey, watchlistSymbols, refreshNonce, cachePreviewMode]);
+  }, [focusSymbol, rangeKey, watchlistSymbols, refreshNonce]);
 
   useEffect(() => {
     let raf = 0;
@@ -493,21 +382,6 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     let timer = null;
-    const tick = () => {
-      if (cancelled) return;
-      setStreamTick((value) => value + 1);
-      timer = window.setTimeout(tick, 5500);
-    };
-    timer = window.setTimeout(tick, 5500);
-    return () => {
-      cancelled = true;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer = null;
     const pulse = () => {
       if (cancelled) return;
       setAgentPulse((value) => Math.min(3, value + 1));
@@ -519,9 +393,9 @@ function App() {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [focusSymbol, rangeKey, streamTick]);
+  }, [focusSymbol, rangeKey]);
 
-  const liveData = useMemo(() => applyStreamTick(data, streamTick), [data, streamTick]);
+  const liveData = data;
   const baseSummary = liveData.summary || DEMO.summary;
   const summary = useMemo(() => {
     const principal = Number(baseSummary.principal || 0) + capitalAdjustment;
@@ -583,11 +457,11 @@ function App() {
       tradingConsensus,
       runtimeQueue,
       apiFailures,
-      fallbackMode,
+      sourceWaitMode,
       lastApiSuccessAt,
       restartNonce,
     };
-  }, [focus, summary, clock, rangeKey, liveData.processStatus, displayedIntelligence, strategyOutput, virtualOrderDesk, organizationDesk, evidenceSummary, companies, agentRuntime, tradeProposals, tradingConsensus, runtimeQueue, apiFailures, fallbackMode, lastApiSuccessAt, restartNonce]);
+  }, [focus, summary, clock, rangeKey, liveData.processStatus, displayedIntelligence, strategyOutput, virtualOrderDesk, organizationDesk, evidenceSummary, companies, agentRuntime, tradeProposals, tradingConsensus, runtimeQueue, apiFailures, sourceWaitMode, lastApiSuccessAt, restartNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -635,7 +509,7 @@ function App() {
   const restartAgents = () => {
     setRestartNonce((value) => value + 1);
     setApiFailures(0);
-    setFallbackMode(false);
+    setSourceWaitMode(false);
   };
 
   return (
@@ -664,9 +538,8 @@ function App() {
         onInitialize={() => requestConfirm("シミュレーション表示を初期化しますか？", initializeSimulation)}
         onRestartAgents={() => requestConfirm("エージェントを再起動しますか？", restartAgents)}
         onRefetch={() => requestConfirm("データを再取得しますか？", () => setRefreshNonce((value) => value + 1))}
-        onToggleFallback={() => requestConfirm("fallback / cache モードを切り替えますか？", () => setCachePreviewMode((value) => !value))}
         loading={loading}
-        fallbackMode={fallbackMode || cachePreviewMode}
+        sourceWaitMode={sourceWaitMode}
         positionView={positionView}
         setPositionView={setPositionView}
       />
@@ -850,9 +723,8 @@ function SimulationControlBar({
   onInitialize,
   onRestartAgents,
   onRefetch,
-  onToggleFallback,
   loading,
-  fallbackMode,
+  sourceWaitMode,
   positionView,
   setPositionView,
 }) {
@@ -860,13 +732,12 @@ function SimulationControlBar({
     <section className="management-bar" aria-label="シミュレーション管理">
       <div className="management-state">
         <span className={`stream-dot ${loading ? "loading" : ""}`}></span>
-        <span>{fallbackMode ? "FALLBACK / cache監視" : loading ? "DATA STREAM / 更新中" : "DATA STREAM / 接続中"}</span>
+        <span>{sourceWaitMode ? "SOURCE WAIT / API再接続" : loading ? "DATA STREAM / 更新中" : "DATA STREAM / 接続中"}</span>
       </div>
       <div className="management-actions">
         <button onClick={onResetView}>表示リセット</button>
         <button onClick={onRefetch}>データ再取得</button>
         <button onClick={onRestartAgents}>エージェント再起動</button>
-        <button onClick={onToggleFallback}>fallback切替</button>
         <button onClick={() => setPositionView(positionView === "table" ? "cards" : "table")}>表示モード</button>
         <label>
           <span>元本追加</span>
@@ -998,14 +869,22 @@ function OrganizationConsole({
         </div>
       </div>
       {activeTab === "research" && (
-        <ResearchOrganizationDesk
-          desk={desk}
-          tasks={tasks}
-          evidenceSummary={evidenceSummary}
-          evidenceRecords={evidenceRecords}
-          decisionContexts={decisionContexts}
-          markdown={markdown}
-        />
+        <>
+          <CompanyRuntimeDesk
+            companies={filteredCompanies}
+            tradeProposals={[]}
+            tradingConsensus={{ status: "research", reason: "調査部門はニュース、企業情報、候補銘柄探索、Evidence収集を処理します。" }}
+            runtimeQueue={runtimeQueue}
+          />
+          <ResearchOrganizationDesk
+            desk={desk}
+            tasks={tasks}
+            evidenceSummary={evidenceSummary}
+            evidenceRecords={evidenceRecords}
+            decisionContexts={decisionContexts}
+            markdown={markdown}
+          />
+        </>
       )}
       {activeTab === "analysis" && (
         <CompanyRuntimeDesk
@@ -1247,7 +1126,7 @@ function VirtualOrderDesk({ desk, markdown }) {
             </thead>
             <tbody>
               {orders.slice(-5).map((order) => (
-                <tr key={`${order.id}-${order.status}`}>
+                <tr key={order.id}>
                   <td>{shortId(order.id)}</td>
                   <td className="row-symbol">{order.symbol}</td>
                   <td>{order.side} / {order.order_type}</td>
@@ -1438,7 +1317,13 @@ function AgentProcessCard({ item, visibleCount }) {
         <span>最終 {item.lastRunAt ? new Date(item.lastRunAt).toLocaleTimeString("ja-JP") : "—"}</span>
         <span>HB {item.heartbeatAge ?? 0}s</span>
       </div>
-      <div className="agent-task">{item.latestTask}</div>
+      <div className="agent-task">{item.currentTask || item.latestTask}</div>
+      <div className="agent-diagnostics">
+        <span>restart {item.restartCount || 0}</span>
+        <span>queue {item.queuedTaskCount || 0}</span>
+        <span>active {item.activeTaskCount || 0}</span>
+      </div>
+      {item.lastErrorMessage && <div className="agent-error-line">{item.lastErrorMessage}</div>}
       <div className="agent-counts">
         <span className="positive">S {item.successCount || 0}</span>
         <span className="warning">W {item.warningCount || 0}</span>
@@ -1462,7 +1347,7 @@ function MiniTerminal({ lines, agentLabel }) {
     <div className="mini-terminal" ref={ref}>
       {(lines || []).map((line, idx) => {
         const lowered = String(line).toLowerCase();
-        const level = lowered.includes("error") ? "terminal-error" : lowered.includes("warning") || lowered.includes("fallback") ? "terminal-warning" : lowered.includes("success") || lowered.includes("completed") ? "terminal-success" : "";
+        const level = lowered.includes("error") ? "terminal-error" : lowered.includes("warning") || lowered.includes("source wait") ? "terminal-warning" : lowered.includes("success") || lowered.includes("completed") ? "terminal-success" : "";
         return <div className={level} key={`${agentLabel}-cmd-${idx}`}>{line}</div>;
       })}
     </div>

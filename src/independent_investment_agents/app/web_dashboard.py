@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import random
 import threading
 import time
 import urllib.request
@@ -25,11 +24,13 @@ from independent_investment_agents.agents.virtual_order_agent import (
     apply_risk_result,
 )
 from independent_investment_agents.domain.virtual_orders import DecisionTrace, ResearchTask, VirtualExecution, VirtualOrder
+from independent_investment_agents.core.task_queue import ErrorResult, retry_call
 from independent_investment_agents.research import (
     AgentRunContext,
     AgentRuntimeEngine,
     ResearchOrganization,
     ResearchRepository,
+    StrategyOutputEngine,
     build_shared_trading_context,
 )
 from independent_investment_agents.repositories.virtual_order_repository import VirtualOrderRepository
@@ -308,7 +309,8 @@ class DashboardService:
         self.capital_growth_policy = CapitalGrowthPolicy()
         self.research_repository = ResearchRepository(RESEARCH_DIR / "research.sqlite3")
         self.research_organization = ResearchOrganization(self.research_repository)
-        self.agent_runtime_engine = AgentRuntimeEngine()
+        self.agent_runtime_engine = AgentRuntimeEngine(start_background=True)
+        self.strategy_output_engine = StrategyOutputEngine()
 
     def _load_session(self) -> dict[str, Any]:
         if SESSION_FILE.exists():
@@ -365,12 +367,39 @@ class DashboardService:
         self._cache[key] = (now, value)
         return value
 
+    def _external_call(
+        self,
+        operation: str,
+        loader,
+        *,
+        fallback: Any,
+        timeout_seconds: float = 8.0,
+        attempts: int = 2,
+    ) -> Any:
+        result = retry_call(
+            loader,
+            attempts=attempts,
+            timeout_seconds=timeout_seconds,
+            error_context={"agent_id": "dashboard-source-adapter", "task_id": operation, "operation": operation},
+        )
+        if isinstance(result, ErrorResult):
+            self._cache[f"external-error:{operation}"] = (time.time(), result.to_dict())
+            return fallback
+        return result
+
     def _fetch_news_items(self, symbol: str, name: str) -> list[dict[str, str]]:
         def loader() -> list[dict[str, str]]:
             items: list[dict[str, str]] = []
             if yf is not None:
+                raw_news = self._external_call(
+                    f"yfinance-news:{symbol}",
+                    lambda: list(getattr(yf.Ticker(symbol), "news", []) or []),
+                    fallback=[],
+                    timeout_seconds=6.0,
+                    attempts=2,
+                )
                 try:
-                    for raw in getattr(yf.Ticker(symbol), "news", [])[:3]:
+                    for raw in raw_news[:3]:
                         title = raw.get("title") or raw.get("content", {}).get("title")
                         if not title:
                             continue
@@ -388,9 +417,19 @@ class DashboardService:
             query = urllib.parse.quote(f"{name} {symbol} 株式 市場")
             url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
             try:
-                request = urllib.request.Request(url, headers={"User-Agent": "IndependentInvestmentAgents/0.0.1"})
-                with urllib.request.urlopen(request, timeout=5) as response:
-                    root = ElementTree.fromstring(response.read())
+                def read_rss() -> bytes:
+                    request = urllib.request.Request(url, headers={"User-Agent": "IndependentInvestmentAgents/0.0.1"})
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.read()
+
+                rss_payload = self._external_call(
+                    f"google-news-rss:{symbol}",
+                    read_rss,
+                    fallback=b"",
+                    timeout_seconds=6.0,
+                    attempts=2,
+                )
+                root = ElementTree.fromstring(rss_payload) if rss_payload else ElementTree.Element("rss")
                 for node in root.findall("./channel/item")[: 3 - len(items)]:
                     title = (node.findtext("title") or "").strip()
                     source = (node.findtext("source") or "Google News").strip()
@@ -407,49 +446,6 @@ class DashboardService:
 
     def _range_conf(self, range_key: str) -> dict[str, str]:
         return RANGE_CONFIG.get(range_key, RANGE_CONFIG["1y"])
-
-    def _fallback_history(self, symbol: str, range_key: str) -> list[dict[str, Any]]:
-        if pd is None:
-            return []
-        seed = sum(ord(ch) for ch in symbol + range_key)
-        rng = random.Random(seed)
-        end = datetime.now(JST).replace(minute=0, second=0, microsecond=0)
-        size_map = {
-            "1d": ("15min", 48),
-            "1w": ("4h", 42),
-            "1mo": ("D", 30),
-            "3mo": ("D", 65),
-            "6mo": ("D", 130),
-            "ytd": ("D", 140),
-            "1y": ("W", 52),
-            "2y": ("W", 104),
-            "5y": ("ME", 60),
-            "10y": ("ME", 120),
-            "all": ("ME", 160),
-        }
-        freq, count = size_map.get(range_key, ("D", 90))
-        index = pd.date_range(end=end, periods=count, freq=freq)
-        base_price = _symbol_defaults(symbol)["seed_price"]
-        close = base_price
-        rows: list[dict[str, Any]] = []
-        for stamp in index:
-            drift = rng.uniform(-0.018, 0.018)
-            open_price = close * (1 + rng.uniform(-0.01, 0.01))
-            close = max(10.0, close * (1 + drift))
-            high = max(open_price, close) * (1 + rng.uniform(0.001, 0.015))
-            low = min(open_price, close) * (1 - rng.uniform(0.001, 0.015))
-            volume = int(abs(base_price) * rng.uniform(90, 400))
-            rows.append(
-                {
-                    "time": stamp.isoformat(),
-                    "open": round(open_price, 2),
-                    "high": round(high, 2),
-                    "low": round(low, 2),
-                    "close": round(close, 2),
-                    "volume": volume,
-                }
-            )
-        return rows
 
     def _normalize_history(self, frame: pd.DataFrame | None) -> list[dict[str, Any]]:
         if pd is None or frame is None or frame.empty:
@@ -482,32 +478,72 @@ class DashboardService:
         return output
 
     def _fetch_history(self, symbol: str, range_key: str, analysis: bool = False) -> list[dict[str, Any]]:
-        stored = self._history_from_run(symbol, range_key if not analysis else "all")
-        if stored:
-            return stored
-        cache_key = f"history:{symbol}:{'analysis' if analysis else range_key}"
+        return self._fetch_history_batch([symbol], range_key, analysis=analysis).get(symbol, [])
 
-        def loader() -> list[dict[str, Any]]:
+    def _fetch_history_batch(self, symbols: list[str], range_key: str, analysis: bool = False) -> dict[str, list[dict[str, Any]]]:
+        normalized_symbols = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
+        if not normalized_symbols:
+            return {}
+        output: dict[str, list[dict[str, Any]]] = {}
+        conf = {"period": "max", "interval": "1d"} if analysis else self._range_conf(range_key)
+        cache_key = f"download:{','.join(normalized_symbols)}:{'analysis' if analysis else range_key}"
+
+        def loader() -> dict[str, list[dict[str, Any]]]:
             if yf is None or pd is None:
-                return []
-            try:
-                ticker = yf.Ticker(symbol)
-                if analysis:
-                    frame = ticker.history(period="max", interval="1d", auto_adjust=False, prepost=False)
-                else:
-                    conf = self._range_conf(range_key)
-                    frame = ticker.history(
-                        period=conf["period"],
-                        interval=conf["interval"],
-                        auto_adjust=False,
-                        prepost=False,
-                    )
-                return self._normalize_history(frame)
-            except Exception:
-                return []
+                return {symbol: [] for symbol in normalized_symbols}
+            frame = self._external_call(
+                f"yfinance-download:{','.join(normalized_symbols)}:{conf['period']}:{conf['interval']}",
+                lambda: yf.download(
+                    tickers=" ".join(normalized_symbols),
+                    period=conf["period"],
+                    interval=conf["interval"],
+                    auto_adjust=False,
+                    prepost=False,
+                    group_by="ticker",
+                    threads=True,
+                    progress=False,
+                ),
+                fallback=None,
+                timeout_seconds=12.0 if analysis else 8.0,
+                attempts=2,
+            )
+            if frame is None:
+                return {symbol: [] for symbol in normalized_symbols}
+            return {
+                symbol: self._normalize_download_history(frame, symbol, len(normalized_symbols) > 1)
+                for symbol in normalized_symbols
+            }
 
-        records = self._cached(cache_key, 240 if analysis else 90, loader)
-        return records
+        downloaded = self._cached(cache_key, 240 if analysis else 90, loader)
+        storage_key = range_key if not analysis else "all"
+        for symbol in normalized_symbols:
+            if downloaded.get(symbol):
+                output[symbol] = downloaded[symbol]
+            else:
+                output[symbol] = self._history_from_run(symbol, storage_key)
+        return output
+
+    def _normalize_download_history(self, frame: pd.DataFrame | None, symbol: str, multi_symbol: bool) -> list[dict[str, Any]]:
+        if pd is None or frame is None or frame.empty:
+            return []
+        if isinstance(frame.columns, pd.MultiIndex):
+            if symbol in frame.columns.get_level_values(0):
+                frame = frame[symbol]
+            elif symbol in frame.columns.get_level_values(-1):
+                frame = frame.xs(symbol, axis=1, level=-1)
+            elif "Close" in frame.columns.get_level_values(-1):
+                frame = frame.droplevel(0, axis=1)
+            else:
+                return []
+        return self._normalize_history(frame)
+
+    def _history_source(self, symbol: str, range_key: str, records: list[dict[str, Any]], analysis: bool = False) -> str:
+        if not records:
+            return "data_unavailable"
+        stored = self._history_from_run(symbol, range_key if not analysis else "all")
+        if stored and len(stored) == len(records) and stored[-1].get("time") == records[-1].get("time"):
+            return "saved_history"
+        return "yfinance"
 
     def _history_from_run(self, symbol: str, range_key: str = "all") -> list[dict[str, Any]]:
         if pd is None or self.run_prices is None or symbol not in self.run_prices.columns:
@@ -550,7 +586,7 @@ class DashboardService:
         return output[-160:]
 
     def _fetch_meta(self, symbol: str) -> dict[str, Any]:
-        fallback = {
+        defaults = {
             "symbol": symbol,
             "jpName": _symbol_defaults(symbol)["jp_name"],
             "longName": _symbol_defaults(symbol)["en_name"],
@@ -559,14 +595,14 @@ class DashboardService:
             "industry": _symbol_defaults(symbol)["industry"],
             "exchange": _symbol_defaults(symbol)["exchange"],
             "currency": _symbol_defaults(symbol)["currency"],
-            "dataSource": "seed_metadata",
+            "dataSource": "symbol_directory",
         }
         cached_profile = self.run_profiles.get(symbol, {})
-        fallback.update(
+        defaults.update(
             {
-                "longName": cached_profile.get("long_name", fallback["longName"]),
-                "sector": cached_profile.get("sector", fallback["sector"]),
-                "industry": cached_profile.get("industry", fallback["industry"]),
+                "longName": cached_profile.get("long_name", defaults["longName"]),
+                "sector": cached_profile.get("sector", defaults["sector"]),
+                "industry": cached_profile.get("industry", defaults["industry"]),
                 "marketCap": cached_profile.get("market_cap"),
                 "trailingPE": cached_profile.get("trailing_pe"),
                 "fiftyTwoWeekHigh": cached_profile.get("fifty_two_week_high"),
@@ -579,13 +615,14 @@ class DashboardService:
         )
 
         if cached_profile:
-            fallback["dataSource"] = "saved_profile"
-            return fallback
+            defaults["dataSource"] = "saved_profile"
+            return defaults
 
         def loader() -> dict[str, Any]:
             if yf is None:
                 return {}
-            try:
+
+            def read_meta() -> dict[str, Any]:
                 ticker = yf.Ticker(symbol)
                 info = ticker.info or {}
                 fast_info = getattr(ticker, "fast_info", {}) or {}
@@ -607,14 +644,20 @@ class DashboardService:
                     "shortName": info.get("shortName"),
                     "country": info.get("country"),
                 }
-            except Exception:
-                return {}
+
+            return self._external_call(
+                f"yfinance-meta:{symbol}",
+                read_meta,
+                fallback={},
+                timeout_seconds=8.0,
+                attempts=2,
+            )
 
         live = self._cached(f"meta:{symbol}", 900, loader)
-        fallback.update({key: value for key, value in live.items() if value not in (None, "", [])})
+        defaults.update({key: value for key, value in live.items() if value not in (None, "", [])})
         if live:
-            fallback["dataSource"] = "yfinance"
-        return fallback
+            defaults["dataSource"] = "yfinance"
+        return defaults
 
     def _quote_from_history(self, symbol: str, history: list[dict[str, Any]]) -> dict[str, Any]:
         seed_price = _symbol_defaults(symbol)["seed_price"]
@@ -631,6 +674,7 @@ class DashboardService:
                 "changePct": 0.0,
                 "seedReferencePrice": seed_price,
                 "dataUnavailable": True,
+                "asOf": None,
             }
         latest = history[-1]
         previous = history[-2] if len(history) > 1 else latest
@@ -648,6 +692,7 @@ class DashboardService:
             "volume": int(latest.get("volume") or 0),
             "change": round(change, 2),
             "changePct": round(change_pct, 2),
+            "asOf": latest.get("time"),
         }
 
     def _analysis_lines(self, symbol: str, full_history: list[dict[str, Any]], meta: dict[str, Any], quote: dict[str, Any]) -> list[str]:
@@ -694,10 +739,8 @@ class DashboardService:
         ]
 
     def _equity_curve(self, current_equity: float, current_holdings: float, current_cash: float) -> list[dict[str, Any]]:
-        if pd is None:
-            return []
         points: list[dict[str, Any]] = []
-        run_dir = self._latest_run_dir()
+        run_dir = self._latest_run_dir() if pd is not None else None
         path = run_dir / "equity_curve.csv" if run_dir else None
         if path and path.exists():
             try:
@@ -720,43 +763,42 @@ class DashboardService:
             points[-1]["cash"] = round(current_cash, 2)
             points[-1]["holdings"] = round(current_holdings, 2)
             return points
-        dates = pd.date_range(end=datetime.now(JST), periods=45, freq="B")
-        start_equity = INITIAL_CASH * 0.985
-        for index, stamp in enumerate(dates):
-            progress = index / max(1, len(dates) - 1)
-            curve = start_equity + (current_equity - start_equity) * progress
-            swing = math.sin(progress * math.pi * 3.2) * 4200
-            equity = curve + swing
-            points.append(
-                {
-                    "time": stamp.isoformat(),
-                    "equity": round(equity, 2),
-                    "cash": round(current_cash + (1 - progress) * 9000, 2),
-                    "holdings": round(max(0.0, equity - current_cash), 2),
-                }
-            )
-        points[-1]["equity"] = round(current_equity, 2)
-        points[-1]["cash"] = round(current_cash, 2)
-        points[-1]["holdings"] = round(current_holdings, 2)
-        return points
+        return [
+            {
+                "time": datetime.now(JST).isoformat(),
+                "equity": round(current_equity, 2),
+                "cash": round(current_cash, 2),
+                "holdings": round(current_holdings, 2),
+            }
+        ]
 
-    def _build_symbol(self, symbol: str, range_key: str) -> dict[str, Any]:
-        selected_history = self._fetch_history(symbol, range_key)
-        full_history = self._fetch_history(symbol, "all", analysis=True)
-        meta = self._fetch_meta(symbol)
+    def _build_symbol(
+        self,
+        symbol: str,
+        range_key: str,
+        *,
+        selected_history: list[dict[str, Any]] | None = None,
+        full_history: list[dict[str, Any]] | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        selected_history = selected_history if selected_history is not None else self._fetch_history(symbol, range_key)
+        full_history = full_history if full_history is not None else self._fetch_history(symbol, "all", analysis=True)
+        meta = meta or self._fetch_meta(symbol)
         quote = self._quote_from_history(symbol, selected_history or full_history)
         sparkline = [{"time": item["time"], "value": item["close"]} for item in (selected_history or full_history)[-30:]]
         analysis = self._analysis_lines(symbol, full_history, meta, quote)
-        selected_source = "saved_history" if self._history_from_run(symbol, range_key) else ("yfinance" if selected_history else "data_unavailable")
-        full_source = "saved_history" if self._history_from_run(symbol, "all") else ("yfinance" if full_history else "data_unavailable")
+        selected_source = self._history_source(symbol, range_key, selected_history)
+        full_source = self._history_source(symbol, "all", full_history, analysis=True)
+        meta_source = str(meta.get("dataSource", "data_unavailable"))
         data_quality = {
             "priceSource": selected_source if selected_history else full_source,
             "displaySource": selected_source,
             "analysisSource": full_source,
-            "metaSource": meta.get("dataSource", "seed_metadata"),
+            "metaSource": meta_source,
             "hasDisplayHistory": bool(selected_history),
             "hasAnalysisHistory": bool(full_history),
-            "needsResearch": not bool(full_history),
+            "latestPriceAt": quote.get("asOf"),
+            "needsResearch": not bool(full_history) or meta_source not in {"yfinance", "saved_profile"},
         }
         return {
             "symbol": symbol,
@@ -945,6 +987,69 @@ class DashboardService:
             projected["notes"] = "legacy corrupted text hidden"
         return projected
 
+    def _runtime_process_items(self, runtime_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        progress_by_status = {
+            "initialized": 10,
+            "running": 82,
+            "busy": 86,
+            "success": 100,
+            "ready": 68,
+            "waiting": 46,
+            "waiting_for_market": 42,
+            "waiting_for_data": 38,
+            "blocked": 25,
+            "warning": 55,
+            "error": 12,
+            "cooldown": 50,
+            "idle": 20,
+            "restarting": 35,
+            "stopped": 8,
+        }
+        items: list[dict[str, Any]] = []
+        states = runtime_snapshot.get("agentRuntime", []) or runtime_snapshot.get("agents", []) or []
+        for state in states:
+            status = str(state.get("status") or "idle")
+            label_ja = str(state.get("label_ja") or state.get("name") or state.get("agent_id") or "Agent")
+            label_en = str(state.get("label_en") or "")
+            agent_id = str(state.get("agent_id") or label_en or label_ja)
+            logs = [str(line) for line in state.get("logs", [])][-6:]
+            last_error = state.get("last_error")
+            if isinstance(last_error, dict):
+                last_error_message = str(last_error.get("message") or last_error.get("error_type") or "")
+            else:
+                last_error_message = str(last_error or "")
+            if last_error_message:
+                logs.append(last_error_message)
+            current_task = state.get("current_task")
+            latest_task = str(state.get("latest_task") or current_task or state.get("last_task") or "runtime_idle")
+            items.append(
+                {
+                    "id": agent_id,
+                    "label": f"{label_ja} / {label_en}" if label_en else label_ja,
+                    "status": status,
+                    "statusLabel": str(state.get("role") or state.get("company") or status),
+                    "progress": progress_by_status.get(status, 50),
+                    "lastRunAt": state.get("last_run_at") or state.get("started_at"),
+                    "heartbeatAt": state.get("heartbeat_at") or state.get("last_heartbeat"),
+                    "heartbeatAgeSeconds": state.get("heartbeat_age_seconds"),
+                    "currentTask": current_task,
+                    "latestTask": latest_task,
+                    "lastError": last_error,
+                    "lastErrorMessage": last_error_message,
+                    "restartCount": state.get("restart_count", 0),
+                    "queuedTaskCount": state.get("queued_task_count", state.get("queue_depth", 0)),
+                    "activeTaskCount": state.get("active_task_count", 0),
+                    "successCount": state.get("completed_task_count", state.get("task_count", 0)),
+                    "warningCount": 1 if status == "warning" else 0,
+                    "errorCount": state.get("error_count", 1 if status == "error" else 0),
+                    "dataSuccessRate": 1.0 if status not in {"error", "blocked", "waiting_for_data"} else 0.0,
+                    "newsSuccessRate": 1.0,
+                    "logs": logs,
+                    "terminal": [f"{agent_id.upper().replace('-', '_')} > {latest_task}", *logs],
+                }
+            )
+        return items
+
     def build_dashboard_payload(self, focus_symbol: str = "6758.T", range_key: str = "3mo", watch_symbols: list[str] | None = None) -> dict[str, Any]:
         market = _tse_status()
         stored_watch_symbols = _load_watch_symbols()
@@ -957,12 +1062,34 @@ class DashboardService:
         focus_symbol = focus_symbol.strip().upper() if focus_symbol else (stored_watch_symbols[0] if stored_watch_symbols else SEED_WATCH_SYMBOLS[0])
         if focus_symbol not in universe:
             universe.insert(0, focus_symbol)
-        focus = self._build_symbol(focus_symbol, range_key)
+        display_histories = self._fetch_history_batch(universe, "1mo")
+        analysis_histories = self._fetch_history_batch(universe, "all", analysis=True)
+        meta_lookup = {symbol: self._fetch_meta(symbol) for symbol in universe}
+        focus_selected_history = (
+            display_histories.get(focus_symbol, [])
+            if range_key == "1mo"
+            else self._fetch_history(focus_symbol, range_key)
+        )
+        focus = self._build_symbol(
+            focus_symbol,
+            range_key,
+            selected_history=focus_selected_history,
+            full_history=analysis_histories.get(focus_symbol, []),
+            meta=meta_lookup.get(focus_symbol),
+        )
 
         watchlist: list[dict[str, Any]] = []
         quote_lookup: dict[str, dict[str, Any]] = {}
+        payload_lookup: dict[str, dict[str, Any]] = {focus_symbol: focus}
         for symbol in universe:
-            payload = self._build_symbol(symbol, "1mo")
+            payload = self._build_symbol(
+                symbol,
+                "1mo",
+                selected_history=display_histories.get(symbol, []),
+                full_history=analysis_histories.get(symbol, []),
+                meta=meta_lookup.get(symbol),
+            )
+            payload_lookup[symbol] = payload
             quote_lookup[symbol] = payload["quote"]
             watchlist.append(
                 {
@@ -980,7 +1107,8 @@ class DashboardService:
         holdings_value = 0.0
         open_pnl = 0.0
         for position in portfolio_positions:
-            quote = quote_lookup.get(position.symbol) or self._build_symbol(position.symbol, "1mo")["quote"]
+            position_payload = payload_lookup.get(position.symbol) or self._build_symbol(position.symbol, "1mo")
+            quote = quote_lookup.get(position.symbol) or position_payload["quote"]
             current = float(quote["current"])
             value = current * position.quantity
             cost_basis = position.average_cost * position.quantity
@@ -997,7 +1125,8 @@ class DashboardService:
                     "value": value,
                     "pnl": pnl,
                     "sector": _symbol_defaults(position.symbol)["sector_jp"],
-                    "sparkline": self._build_symbol(position.symbol, "1mo")["sparkline"],
+                    "sparkline": position_payload["sparkline"],
+                    "dataQuality": position_payload.get("dataQuality", {}),
                 }
             )
 
@@ -1029,58 +1158,7 @@ class DashboardService:
             }
         )
 
-        is_open = bool(market["is_open"])
-        data_logs = (
-            ["Streaming latest prices...", "Parsing live OHLCV...", "Completed"]
-            if is_open
-            else ["Refreshing historical candles...", "Collecting overnight references...", "Analysis cache ready"]
-        )
-        analysis_logs = (
-            ["Computing intraday momentum...", "Detecting trend shift...", "Signal queue updated"]
-            if is_open
-            else ["Scanning full history...", "Reviewing news context...", "Tomorrow plan drafted"]
-        )
-        risk_logs = (
-            ["Checking concentration...", "Testing drawdown guard...", "No breach"]
-            if is_open
-            else ["Checking gap risk...", "Reviewing stop assumptions...", "Rebalance watchlist ready"]
-        )
-        now_iso = datetime.now(UTC).isoformat()
-        time_label = market["jst"].strftime("%H:%M:%S")
-
-        def agent(
-            agent_id: str,
-            label: str,
-            status: str,
-            status_label: str,
-            progress: int,
-            latest_task: str,
-            logs: list[str],
-            terminal: list[str],
-            warning_count: int = 0,
-            error_count: int = 0,
-        ) -> dict[str, Any]:
-            code = agent_id.upper().replace("-", "_")
-            return {
-                "id": agent_id,
-                "label": label,
-                "status": status,
-                "statusLabel": status_label,
-                "progress": progress,
-                "lastRunAt": now_iso,
-                "heartbeatAt": now_iso,
-                "latestTask": latest_task,
-                "successCount": max(1, len(logs) - warning_count - error_count),
-                "warningCount": warning_count,
-                "errorCount": error_count,
-                "dataSuccessRate": 1.0 if error_count == 0 else 0.72,
-                "newsSuccessRate": 1.0 if agent_id != "news-agent" or warning_count == 0 else 0.68,
-                "logs": [f"[{time_label}] {line}" for line in logs],
-                "terminal": [f"[{time_label}] {code} > {line}" for line in terminal],
-            }
-
         news_items = self._fetch_news_items(focus_symbol, focus["jpName"])
-        no_news_warning = 0 if news_items else 1
         research_snapshot = self.research_organization.run_snapshot(
             AgentRunContext(
                 focus_symbol=focus_symbol,
@@ -1139,16 +1217,9 @@ class DashboardService:
             market,
             consensus_decision_context,
         )
-        virtual_latest_status = virtual_order_desk["summary"]["latestStatus"]
         process_items = [
-            agent("data-agent", "Data Agent", "running", "価格監視" if is_open else "履歴・ニュース収集", 94 if is_open else 86, f"{focus_symbol} OHLCV / 52週 / 平均出来高", data_logs, [f'fetch_price("{focus_symbol}")', "normalize_ohlcv()", "calculate_52w_range()"]),
-            agent("market-agent", "Market Agent", "running", "市場状態監視", 98, market["label"], ["Updating UTC/JST clock...", "Checking TSE session...", "Monitoring volume pulse..."], ["clock_tick()", "detect_market_phase()", "watch_volume_spike()"]),
-            agent("news-agent", "News Agent", "warning" if no_news_warning else "running", "ニュース取得", 72 if no_news_warning else 88, "ニュース・企業材料の取得", ["Fetching company news...", "Summarizing headlines...", "Stored feed entries..."], [f'fetch_news("{focus_symbol}")', "summarize_titles()", "score_impact()"], warning_count=no_news_warning),
-            agent("analysis-agent", "Analysis Agent", "running", "全期間分析", 90 if is_open else 82, "トレンド / ボラティリティ / 52週位置", analysis_logs, ["analyze_full_history()", "compute_volatility()", "compare_average_volume()"]),
-            agent("strategy-agent", "Strategy Agent", "success", "観察計画生成", 84, "STRATEGY OUTPUT更新", ["Combining analysis + news...", "Drafting observation points...", "Strategy output updated"], ["read_analysis()", "merge_news_context()", "emit_strategy_output()"]),
-            agent("virtual-order-agent", "Virtual Order Agent", "success", "仮想注文管理", 88, f"VirtualOrder status: {virtual_latest_status}", ["Reading DecisionContext...", "Checking virtual risk gate...", "Writing simulated audit trail..."], ["create_virtual_order()", "check_virtual_risk()", "record_orders_jsonl()"]),
-            agent("portfolio-agent", "Portfolio Agent", "success", "資産評価", 95, "総資産・含み損益・保有評価", ["Marking positions...", "Revaluing cash + holdings...", "PnL updated"], ["mark_to_market()", "update_open_pnl()", "calculate_allocation()"]),
-            agent("ui-agent", "UI Agent", "success", "UI同期", 91, "FOCUS / WATCHLIST / Positions同期", ["Syncing focus state...", "Refreshing visible panels...", "UI state applied"], ["sync_focus()", "render_watchlist()", "reflect_loading_state()"]),
+            *self._runtime_process_items(runtime_snapshot),
+            *self._runtime_process_items(research_snapshot.get("researchRuntime", {})),
         ]
         intelligence_feed = [
             {
@@ -1168,13 +1239,14 @@ class DashboardService:
             },
         ]
 
-        strategy_output = {
-            "summary": f"{focus['jpName']} は {focus['analysis'][0] if focus.get('analysis') else '全期間分析を継続中'}。",
-            "market": "市場開場中のため価格・出来高・トレンド検出を優先します。" if market["is_open"] else "閉場中のためニュース収集、企業レポート確認、翌営業日の計画生成を優先します。",
-            "focus": f"注目銘柄は {focus_symbol}。出来高、52週レンジ位置、寄り付きギャップを重点監視します。",
-            "risk": "リスク評価では集中度、流動性、スリッページ、保有根拠の崩れを継続確認します。",
-            "tomorrow": "次回は出来高回復、ニュースの鮮度、寄り付き価格の乖離を確認します。",
-        }
+        strategy_output = self.strategy_output_engine.build(
+            focus=focus,
+            market=market,
+            news_items=news_items,
+            research_snapshot=research_snapshot,
+            runtime_snapshot=runtime_snapshot,
+            virtual_order_desk=virtual_order_desk,
+        )
 
         return {
             "version": "0.0.4",
@@ -1242,6 +1314,7 @@ class DashboardService:
             "agentFindings": research_snapshot.get("agentFindings", []),
             "decisionContexts": research_snapshot.get("decisionContexts", []),
             "researchMarkdown": research_snapshot.get("researchMarkdown", ""),
+            "researchRuntime": research_snapshot.get("researchRuntime", {}),
             "virtualOrderMarkdown": virtual_order_desk.get("markdown", ""),
             "companies": runtime_snapshot.get("companies", []),
             "agentRuntime": runtime_snapshot.get("agentRuntime", []),
@@ -1254,6 +1327,72 @@ class DashboardService:
     def build_symbol_payload(self, symbol: str, range_key: str) -> dict[str, Any]:
         return self._build_symbol(symbol.strip().upper(), range_key)
 
+    def build_agents_payload(self) -> dict[str, Any]:
+        research_runtime = self.research_organization.runtime.snapshot()
+        trading_states = [state.to_dict() for state in self.agent_runtime_engine.store.list_states()]
+        trading_tasks = [task.to_dict() for task in self.agent_runtime_engine.store.list_tasks(limit=50)]
+        trading_runtime = {
+            "agents": trading_states,
+            "tasks": trading_tasks,
+            "taskCount": len(trading_tasks),
+        }
+        process_items = [
+            *self._runtime_process_items({"agents": trading_states}),
+            *self._runtime_process_items(research_runtime),
+        ]
+        return _clean_display_value(
+            {
+                "ok": True,
+                "generatedAt": datetime.now(UTC).isoformat(),
+                "agents": process_items,
+                "researchRuntime": research_runtime,
+                "tradingRuntime": trading_runtime,
+            }
+        )
+
+    def build_agent_tasks_payload(self) -> dict[str, Any]:
+        research_runtime = self.research_organization.runtime.snapshot()
+        trading_tasks = [task.to_dict() for task in self.agent_runtime_engine.store.list_tasks(limit=80)]
+        return _clean_display_value(
+            {
+                "ok": True,
+                "generatedAt": datetime.now(UTC).isoformat(),
+                "researchQueue": research_runtime.get("queue", {}),
+                "tradingTasks": trading_tasks,
+            }
+        )
+
+    def build_agent_logs_payload(self, agent_id: str | None = None, limit: int = 200) -> dict[str, Any]:
+        log_dir = self.research_organization.runtime.config.log_dir
+        if not log_dir.is_absolute():
+            log_dir = PROJECT_ROOT / log_dir
+        rows: list[dict[str, Any]] = []
+        if log_dir.exists():
+            paths = [log_dir / f"{agent_id}.jsonl"] if agent_id else sorted(log_dir.glob("*.jsonl"))
+            for path in paths:
+                if not path.exists():
+                    continue
+                try:
+                    lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
+                except OSError:
+                    continue
+                for line in lines:
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        item = {"agent_id": path.stem, "message": line}
+                    rows.append(item)
+        rows = sorted(rows, key=lambda item: str(item.get("created_at") or ""))[-limit:]
+        return _clean_display_value(
+            {
+                "ok": True,
+                "generatedAt": datetime.now(UTC).isoformat(),
+                "agentId": agent_id,
+                "logDir": str(log_dir),
+                "logs": rows,
+            }
+        )
+
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
     dashboard_service = DashboardService()
@@ -1263,6 +1402,32 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path == "/api/health":
             self._send_json({"ok": True, "timestamp": datetime.now(UTC).isoformat()})
+            return
+        if path == "/api/agents":
+            self._send_json(self.dashboard_service.build_agents_payload())
+            return
+        if path == "/api/agents/runtime":
+            payload = self.dashboard_service.build_agents_payload()
+            self._send_json(
+                {
+                    "ok": True,
+                    "generatedAt": payload.get("generatedAt"),
+                    "researchRuntime": payload.get("researchRuntime", {}),
+                    "tradingRuntime": payload.get("tradingRuntime", {}),
+                }
+            )
+            return
+        if path == "/api/agents/tasks":
+            self._send_json(self.dashboard_service.build_agent_tasks_payload())
+            return
+        if path == "/api/agents/logs":
+            query = urllib.parse.parse_qs(parsed.query)
+            agent_id = query.get("agent", [None])[0]
+            try:
+                limit = int(query.get("limit", ["200"])[0])
+            except ValueError:
+                limit = 200
+            self._send_json(self.dashboard_service.build_agent_logs_payload(agent_id, max(1, min(limit, 1000))))
             return
         if path == "/api/dashboard":
             query = urllib.parse.parse_qs(parsed.query)

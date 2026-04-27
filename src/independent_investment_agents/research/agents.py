@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from dataclasses import replace
 from typing import Any
 
+from independent_investment_agents.agents.base_agent import BaseAgent
+from independent_investment_agents.core.agent_runtime import AgentRuntime, AgentRuntimeConfig, load_agent_runtime_config
+from independent_investment_agents.core.task_queue import ErrorResult, TaskEnvelope, retry_call
 from independent_investment_agents.research.llm_provider import TemplateLanguageProvider
 from independent_investment_agents.research.models import (
     AgentFinding,
@@ -16,13 +20,65 @@ from independent_investment_agents.research.models import (
 from independent_investment_agents.research.repository import ResearchRepository, persist_run_results
 
 
-class ResearchAgent(ABC):
+class ResearchAgent(BaseAgent):
     name: str
     division: str
+
+    def __init__(self) -> None:
+        super().__init__(agent_id=self._default_agent_id(), name=self.name)
 
     @abstractmethod
     def run(self, context: AgentRunContext) -> AgentRunResult:
         raise NotImplementedError
+
+    def handle_task(self, task: TaskEnvelope) -> AgentRunResult:
+        context = task.payload.get("context")
+        if not isinstance(context, AgentRunContext):
+            raise TypeError("research task payload requires AgentRunContext")
+        return self.run(context)
+
+    def _default_agent_id(self) -> str:
+        return "-".join(
+            part
+            for part in "".join(ch.lower() if ch.isalnum() else "-" for ch in self.name).split("-")
+            if part
+        )
+
+
+class ResearchDirectorAgent(BaseAgent):
+    name = "Research Director Agent"
+    division = "Operations"
+
+    def __init__(self, config: AgentRuntimeConfig | None = None) -> None:
+        super().__init__(agent_id="research-director", name=self.name)
+        self.config = config or load_agent_runtime_config()
+
+    def plan_tasks(self, context: AgentRunContext, agents: list[ResearchAgent]) -> list[TaskEnvelope]:
+        timeout = self.config.task_timeout_seconds
+        return [
+            TaskEnvelope(
+                task_type="research_snapshot",
+                payload={"context": context},
+                target_agent_id=agent.agent_id,
+                priority=self._priority_for(agent),
+                created_by=self.agent_id,
+                max_attempts=self.config.max_retries,
+                timeout_seconds=timeout,
+            )
+            for agent in agents
+        ]
+
+    def handle_task(self, task: TaskEnvelope) -> list[TaskEnvelope]:
+        context = task.payload.get("context")
+        agents = task.payload.get("agents", [])
+        return self.plan_tasks(context, agents)
+
+    def _priority_for(self, agent: ResearchAgent) -> int:
+        if agent.division in {"Intelligence", "Company Research", "Market Research"}:
+            return 1
+        if agent.division == "Strategy":
+            return 2
+        return 3
 
 
 class MarketObserverAgent(ResearchAgent):
@@ -117,7 +173,7 @@ class NewsIntelligenceAgent(ResearchAgent):
         symbol = context.focus_symbol
         real_items = [
             item for item in context.news_items[:3]
-            if item.get("title") and item.get("source") not in {"News Agent", "Fallback", "Cache"}
+            if item.get("title") and item.get("source") not in {"News Agent", "Cache"}
         ]
         for idx, item in enumerate(real_items):
             source_name = str(item.get("source") or "RSS")
@@ -294,7 +350,7 @@ class StrategySynthesisAgent(ResearchAgent):
             evidence_ids.append(f"ev-yf-ohlcv-{symbol.lower().replace('.', '-')}-{date_key}")
         if data_quality.get("metaSource") in {"yfinance", "saved_profile"}:
             evidence_ids.append(f"ev-yf-meta-{symbol.lower().replace('.', '-')}-{date_key}")
-        if any(item.get("title") and item.get("source") not in {"News Agent", "Fallback", "Cache"} for item in context.news_items):
+        if any(item.get("title") and item.get("source") not in {"News Agent", "Cache"} for item in context.news_items):
             evidence_ids.append(f"ev-rss-news-{symbol.lower().replace('.', '-')}-{date_key}-0")
         if len(evidence_ids) < 2:
             task = ResearchTask(
@@ -362,6 +418,7 @@ class AgentChatCoordinator(ResearchAgent):
     division = "Strategy"
 
     def __init__(self) -> None:
+        super().__init__()
         self.llm = TemplateLanguageProvider()
 
     def run(self, context: AgentRunContext) -> AgentRunResult:
@@ -372,15 +429,32 @@ class AgentChatCoordinator(ResearchAgent):
             refs.append(f"ev-yf-ohlcv-{symbol.lower().replace('.', '-')}-{date_key}")
         if context.focus.get("dataQuality", {}).get("metaSource") in {"yfinance", "saved_profile"}:
             refs.append(f"ev-yf-meta-{symbol.lower().replace('.', '-')}-{date_key}")
-        response = self.llm.generate_chat_response(
-            "summarize research context",
-            refs,
-            {
-                "symbol": symbol,
-                "market_state": f"TSE {context.market.get('phase')}",
-                "risk_summary": "virtual-only evidence-gated simulation",
-            },
+        response = retry_call(
+            lambda: self.llm.generate_chat_response(
+                "summarize research context",
+                refs,
+                {
+                    "symbol": symbol,
+                    "market_state": f"TSE {context.market.get('phase')}",
+                    "risk_summary": "virtual-only evidence-gated simulation",
+                },
+            ),
+            attempts=2,
+            timeout_seconds=6.0,
+            error_context={"agent_id": self.agent_id, "task_id": "agent-chat", "operation": "llm_summary"},
         )
+        if isinstance(response, ErrorResult):
+            finding = AgentFinding(
+                agent_name=self.name,
+                related_task_id=None,
+                related_evidence_ids=refs,
+                finding_type="chat_error",
+                claim="Agent Chat summary is temporarily unavailable; existing evidence is still preserved.",
+                confidence=0.1,
+                limitations=[response.message],
+                suggested_actions=["retry local LLM summary", "answer from stored evidence only"],
+            )
+            return AgentRunResult(self.name, "warning", [response.message], [], [], [finding])
         finding = AgentFinding(
             agent_name=self.name,
             related_task_id=None,
@@ -395,8 +469,10 @@ class AgentChatCoordinator(ResearchAgent):
 
 
 class ResearchOrganization:
-    def __init__(self, repository: ResearchRepository) -> None:
+    def __init__(self, repository: ResearchRepository, config: AgentRuntimeConfig | None = None) -> None:
         self.repository = repository
+        self.config = config or load_agent_runtime_config()
+        self.director = ResearchDirectorAgent(self.config)
         self.agents: list[ResearchAgent] = [
             MarketObserverAgent(),
             StockDiscoveryAgent(),
@@ -407,18 +483,47 @@ class ResearchOrganization:
             StrategySynthesisAgent(),
             AgentChatCoordinator(),
         ]
+        self.runtime = AgentRuntime(self.config)
+        self.runtime.register_agent(self.director, factory=lambda: ResearchDirectorAgent(self.config))
+        for agent in self.agents:
+            agent_class = agent.__class__
+            self.runtime.register_agent(agent, factory=agent_class)
+        self.runtime.start()
 
     def run_snapshot(self, context: AgentRunContext) -> dict[str, Any]:
         self.repository.ensure_schema()
-        results = [agent.run(context) for agent in self.agents]
+        context = self._limited_context(context)
+        self.director.heartbeat()
+        tasks = self.director.plan_tasks(context, self.agents)
+        task_ids = self.runtime.submit_tasks(tasks)
+        task_results = self.runtime.wait_for_results(task_ids, self.config.task_timeout_seconds + 2.0)
+        task_result_by_id = {result.task_id: result for result in task_results}
+        results: list[AgentRunResult] = []
+        for task in tasks:
+            agent = next((item for item in self.agents if item.agent_id == task.target_agent_id), None)
+            if agent is None:
+                continue
+            task_result = task_result_by_id.get(task.task_id)
+            if task_result and task_result.ok and isinstance(task_result.output, AgentRunResult):
+                results.append(task_result.output)
+                continue
+            error = task_result.error if task_result else ErrorResult(
+                agent_id=agent.agent_id,
+                task_id=task.task_id,
+                error_type="timeout",
+                message="agent did not return before the snapshot deadline",
+                retryable=True,
+            )
+            results.append(self._error_result_for(agent, error))
         persist_run_results(self.repository, results)
         self.repository.archive_low_value_evidence()
         markdown = self.repository.export_markdown()
         current_decisions = [decision for result in results for decision in result.decisions]
         decisions = self.repository.list_decision_contexts(limit=8)
         latest_decision = current_decisions[-1].to_dict() if current_decisions else None
+        runtime_snapshot = self.runtime.snapshot()
         return {
-            "organizationDesk": self._organization_desk(results),
+            "organizationDesk": self._organization_desk(results, runtime_snapshot),
             "researchTasks": [_clean_for_display(task.to_dict()) for task in self.repository.list_tasks(limit=12)],
             "evidenceSummary": self.repository.summary(),
             "evidenceRecords": [_clean_for_display(item.to_dict()) for item in self.repository.list_evidence(limit=8)],
@@ -426,9 +531,27 @@ class ResearchOrganization:
             "decisionContexts": [_clean_for_display(item.to_dict()) for item in decisions],
             "latestDecisionContext": _clean_for_display(latest_decision),
             "researchMarkdown": _clean_for_display(markdown),
+            "researchRuntime": _clean_for_display(runtime_snapshot),
         }
 
-    def _organization_desk(self, results: list[AgentRunResult]) -> dict[str, Any]:
+    def _limited_context(self, context: AgentRunContext) -> AgentRunContext:
+        limit = max(1, int(self.config.max_symbols_per_cycle))
+        return replace(context, watchlist=list(context.watchlist[:limit]))
+
+    def _error_result_for(self, agent: ResearchAgent, error: ErrorResult) -> AgentRunResult:
+        finding = AgentFinding(
+            agent_name=agent.name,
+            related_task_id=None,
+            related_evidence_ids=[],
+            finding_type="agent_error",
+            claim=f"{agent.name} failed safely and returned a structured ErrorResult.",
+            confidence=0.0,
+            limitations=[error.message],
+            suggested_actions=["watchdog will retry or restart the agent", "keep trading gate blocked until evidence is complete"],
+        )
+        return AgentRunResult(agent.name, "error", [error.message], [], [], [finding])
+
+    def _organization_desk(self, results: list[AgentRunResult], runtime_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
         division_labels = {
             "Market Research": ("調査部門", "Research", "市場観測、候補銘柄探索、実データEvidence収集を担当します。"),
             "Intelligence": ("調査部門", "Research", "ニュースと保存済みEvidenceを整理します。"),
@@ -449,15 +572,26 @@ class ResearchOrganization:
         }
         divisions: dict[str, list[dict[str, Any]]] = {}
         by_name = {agent.name: agent for agent in self.agents}
+        runtime_by_agent_id = {
+            str(agent.get("agent_id")): agent
+            for agent in (runtime_snapshot or {}).get("agents", [])
+        }
         for result in results:
             division = by_name[result.agent_name].division
             label_ja, label_en = agent_labels.get(result.agent_name, (result.agent_name, result.agent_name))
+            runtime_state = runtime_by_agent_id.get(by_name[result.agent_name].agent_id, {})
             divisions.setdefault(division, []).append(
                 {
+                    "agentId": by_name[result.agent_name].agent_id,
                     "name": result.agent_name,
                     "labelJa": label_ja,
                     "labelEn": label_en,
                     "status": result.status,
+                    "currentTask": runtime_state.get("current_task"),
+                    "lastHeartbeat": runtime_state.get("last_heartbeat"),
+                    "lastError": runtime_state.get("last_error"),
+                    "restartCount": runtime_state.get("restart_count", 0),
+                    "queuedTaskCount": runtime_state.get("queued_task_count", 0),
                     "logs": result.logs[-4:],
                     "tasks": len(result.tasks),
                     "evidence": len(result.evidence),
@@ -465,9 +599,31 @@ class ResearchOrganization:
                     "decisions": len(result.decisions),
                 }
             )
+        director_state = runtime_by_agent_id.get(self.director.agent_id, self.director.snapshot())
+        divisions.setdefault("Operations", []).append(
+            {
+                "agentId": self.director.agent_id,
+                "name": self.director.name,
+                "labelJa": "Research Director",
+                "labelEn": "Research Director",
+                "status": director_state.get("status", "idle"),
+                "currentTask": director_state.get("current_task"),
+                "lastHeartbeat": director_state.get("last_heartbeat"),
+                "lastError": director_state.get("last_error"),
+                "restartCount": director_state.get("restart_count", 0),
+                "queuedTaskCount": director_state.get("queued_task_count", 0),
+                "logs": ["task queue planned", f"activity_level={self.config.activity_level}"],
+                "tasks": (runtime_snapshot or {}).get("queue", {}).get("pendingCount", 0),
+                "evidence": 0,
+                "findings": 0,
+                "decisions": 0,
+            }
+        )
         return {
             "mode": "research_simulation_only",
             "safety": "No broker API, no external execution, no real-money order. Evidence OS is for research simulation only.",
+            "runtime": runtime_snapshot,
+            "config": self.config.to_dict(),
             "divisions": [
                 {
                     "name": name,

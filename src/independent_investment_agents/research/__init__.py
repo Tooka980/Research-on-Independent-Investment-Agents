@@ -1,6 +1,7 @@
 """Research organization models and orchestration for the simulator."""
 
 from independent_investment_agents.research.agents import ResearchOrganization
+from independent_investment_agents.core import AgentRuntime, AgentRuntimeConfig, ErrorResult, TaskEnvelope, TaskQueue, TaskResult
 from independent_investment_agents.research.llm_provider import LLMProvider, TemplateLanguageProvider
 from independent_investment_agents.research.models import (
     AgentFinding,
@@ -30,6 +31,8 @@ __all__ = [
     "AgentFinding",
     "AgentEvent",
     "AgentRuntimeEngine",
+    "AgentRuntime",
+    "AgentRuntimeConfig",
     "AgentRuntimeStore",
     "AgentRuntimeState",
     "AgentRunContext",
@@ -38,6 +41,7 @@ __all__ = [
     "ChatResponse",
     "DecisionContext",
     "EvidenceRecord",
+    "ErrorResult",
     "KnowledgeMemory",
     "LLMProvider",
     "ResearchOrganization",
@@ -46,6 +50,9 @@ __all__ = [
     "SharedTradingContext",
     "StrategyOutputEngine",
     "TemplateLanguageProvider",
+    "TaskEnvelope",
+    "TaskQueue",
+    "TaskResult",
     "TradeProposal",
     "TradingConsensus",
     "build_shared_trading_context",

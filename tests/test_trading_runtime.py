@@ -51,7 +51,22 @@ class TradingRuntimeTests(unittest.TestCase):
         snapshot = AgentRuntimeEngine().run(context(is_open=False))
         self.assertEqual(snapshot["tradingConsensus"]["status"], "waiting_for_market")
         self.assertEqual(snapshot["tradeProposals"], [])
-        self.assertTrue(all(item["status"] in {"waiting_for_market", "ready", "running"} for item in snapshot["agentRuntime"]))
+        trading_states = [item for item in snapshot["agentRuntime"] if item["company"] == "virtual-trading"]
+        research_states = [item for item in snapshot["agentRuntime"] if item["company"] in {"research", "quant-analysis"}]
+        self.assertTrue(all(item["status"] == "waiting_for_market" for item in trading_states))
+        self.assertTrue(any(item["status"] in {"running", "success"} for item in research_states))
+
+    def test_data_unavailable_blocks_consensus(self) -> None:
+        shared = context(is_open=True)
+        shared.data_quality_by_symbol["6758.T"] = {
+            "priceSource": "data_unavailable",
+            "hasDisplayHistory": False,
+            "hasAnalysisHistory": False,
+            "needsResearch": True,
+        }
+        consensus = TradingConsensusGate().decide([], shared)
+        self.assertEqual(consensus.status, "blocked")
+        self.assertIn("refresh_price_source", consensus.required_research_tasks)
 
     def test_companies_are_bilingual_and_include_added_agents(self) -> None:
         snapshot = AgentRuntimeEngine().run(context(is_open=True))

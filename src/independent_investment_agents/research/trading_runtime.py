@@ -5,12 +5,16 @@ import math
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from independent_investment_agents.core.agent_runtime import load_agent_runtime_config
+from independent_investment_agents.research.llm_provider import TemplateLanguageProvider
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -43,6 +47,8 @@ class SharedTradingContext:
     latest_prices: dict[str, float]
     candidate_symbols: list[str]
     risk_limits: dict[str, float]
+    data_quality_by_symbol: dict[str, dict[str, Any]] = field(default_factory=dict)
+    price_timestamp_by_symbol: dict[str, str] = field(default_factory=dict)
     timestamp: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -387,6 +393,55 @@ class AgentRuntimeStore:
         )
 
 
+def _price_ready(context: SharedTradingContext, symbol: str) -> bool:
+    price = float(context.latest_prices.get(symbol) or 0.0)
+    if price <= 0 or not math.isfinite(price):
+        return False
+    data_quality = context.data_quality_by_symbol.get(symbol) or {}
+    if not data_quality:
+        return True
+    source = str(data_quality.get("priceSource") or data_quality.get("displaySource") or "")
+    if source == "data_unavailable":
+        return False
+    if data_quality.get("needsResearch") and not data_quality.get("hasAnalysisHistory"):
+        return False
+    timestamp = context.price_timestamp_by_symbol.get(symbol) or data_quality.get("latestPriceAt")
+    if context.market_state.get("is_open") and timestamp:
+        try:
+            parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        if datetime.now(UTC) - parsed.astimezone(UTC) > timedelta(days=3):
+            return False
+    return True
+
+
+def _score_trade_candidate(context: SharedTradingContext, bias: str) -> dict[str, Any]:
+    cash = float(context.portfolio_state.get("cash") or 0.0)
+    equity = float(context.portfolio_state.get("equity") or max(cash, 1.0))
+    cash_ratio = cash / max(equity, 1.0)
+    max_notional = float(context.risk_limits.get("max_order_value") or 120_000.0)
+    if bias == "risk":
+        side = "sell" if cash_ratio < 0.18 else "hold"
+        return {
+            "side": side,
+            "order_type": "liquidation",
+            "expected_edge": 0.01 if side == "sell" else 0.0,
+            "confidence": 0.58 if side == "sell" else 0.42,
+            "risk_notes": ["現金比率ガード", "リスク削減寄り", "SharedTradingContext共通スコア"],
+        }
+    side = "buy" if cash_ratio > 0.22 else "hold"
+    return {
+        "side": side,
+        "order_type": "rebalance",
+        "expected_edge": min(0.035, max_notional / max(equity, 1.0)),
+        "confidence": 0.62 if side == "buy" else 0.44,
+        "risk_notes": ["資金配分余地あり", "EvidenceGate通過", "SharedTradingContext共通スコア"],
+    }
+
+
 class VirtualTrader:
     def __init__(self, trader_id: str, bias: str) -> None:
         self.trader_id = trader_id
@@ -399,24 +454,10 @@ class VirtualTrader:
             return None
         symbol = context.candidate_symbols[0] if context.candidate_symbols else ""
         price = float(context.latest_prices.get(symbol) or 0.0)
-        if not symbol or price <= 0 or not math.isfinite(price):
+        if not symbol or price <= 0 or not math.isfinite(price) or not _price_ready(context, symbol):
             return None
-
-        cash = float(context.portfolio_state.get("cash") or 0.0)
-        equity = float(context.portfolio_state.get("equity") or max(cash, 1.0))
-        cash_ratio = cash / max(equity, 1.0)
-        max_notional = float(context.risk_limits.get("max_order_value") or 120_000.0)
-
-        if self.bias == "risk":
-            side = "sell" if cash_ratio < 0.18 else "hold"
-            expected_edge = 0.01 if side == "sell" else 0.0
-            confidence = 0.58 if side == "sell" else 0.42
-            notes = ["現金比率ガード", "リスク削減寄り"]
-        else:
-            side = "buy" if cash_ratio > 0.22 else "hold"
-            expected_edge = min(0.035, max_notional / max(equity, 1.0))
-            confidence = 0.62 if side == "buy" else 0.44
-            notes = ["資金配分余地あり", "EvidenceGate通過"]
+        score = _score_trade_candidate(context, self.bias)
+        side = score["side"]
 
         if side == "hold":
             return None
@@ -424,10 +465,10 @@ class VirtualTrader:
             trader_id=self.trader_id,
             symbol=symbol,
             side=side,
-            order_type="rebalance" if side == "buy" else "liquidation",
-            confidence=confidence,
-            expected_edge=expected_edge,
-            risk_notes=notes,
+            order_type=score["order_type"],
+            confidence=score["confidence"],
+            expected_edge=score["expected_edge"],
+            risk_notes=score["risk_notes"],
             evidence_refs=list(context.evidence_refs),
         )
 
@@ -450,13 +491,33 @@ class TradingConsensusGate:
                 reason="Evidenceが不足しているため、追加調査へ戻します。",
                 required_research_tasks=["collect_trade_evidence"],
             )
+        symbols_to_check = list(dict.fromkeys([proposal.symbol for proposal in proposals] or context.candidate_symbols[:1]))
+        stale_symbols = [symbol for symbol in symbols_to_check if not _price_ready(context, symbol)]
+        if stale_symbols:
+            return TradingConsensus(
+                status="blocked",
+                selected_proposal=None,
+                rejected_proposals=proposals,
+                reason=f"価格鮮度または実データが不足しています: {', '.join(stale_symbols)}。追加調査へ戻します。",
+                required_research_tasks=["refresh_price_source"],
+            )
 
-        actionable = [proposal for proposal in proposals if proposal.side in {"buy", "sell"}]
+        min_confidence = float(context.risk_limits.get("min_confidence_to_trade") or 0.0)
+        confidence_rejected = [
+            proposal
+            for proposal in proposals
+            if proposal.side in {"buy", "sell"} and proposal.confidence < min_confidence
+        ]
+        actionable = [
+            proposal
+            for proposal in proposals
+            if proposal.side in {"buy", "sell"} and proposal.confidence >= min_confidence
+        ]
         if not actionable:
             return TradingConsensus(
                 status="hold_watch",
                 selected_proposal=None,
-                rejected_proposals=[],
+                rejected_proposals=confidence_rejected,
                 reason="2名の仮想売買担当が見送り判定。観測を継続します。",
                 required_research_tasks=["refresh_price_and_volume"],
             )
@@ -496,6 +557,7 @@ class AgentRuntimeEngine:
         self._latest_context: SharedTradingContext | None = None
         self._latest_snapshot: dict[str, Any] | None = None
         self._tick_count = 0
+        self.language = TemplateLanguageProvider()
         if start_background:
             self.start()
 
@@ -538,7 +600,12 @@ class AgentRuntimeEngine:
         self.store.ensure_schema()
         trader_a = VirtualTrader("virtual-trader-a", "growth")
         trader_b = VirtualTrader("virtual-trader-b", "risk")
-        proposals = [proposal for proposal in [trader_a.propose(context), trader_b.propose(context)] if proposal]
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="virtual-trader") as executor:
+            proposals = [
+                proposal
+                for proposal in executor.map(lambda trader: trader.propose(context), [trader_a, trader_b])
+                if proposal
+            ]
         consensus = TradingConsensusGate().decide(proposals, context)
         self._tick_count += 1
         queue = self._queue(context, consensus)
@@ -609,7 +676,7 @@ class AgentRuntimeEngine:
                 next_run_at=(now + timedelta(seconds=1 + ((self._tick_count + index) % 5))).isoformat(),
                 duration_ms=duration_ms,
                 queue_depth=max(0, len(queue) - (index % 4)),
-                logs=_logs_for(definition["id"], context, consensus, trigger),
+                logs=_logs_for(definition["id"], context, consensus, trigger, self.language),
                 principles=list(definition.get("principles", [])),
                 completed_task_count=completed_count,
                 active_task_count=1 if task_status == "running" else 0,
@@ -692,15 +759,30 @@ def build_shared_trading_context(
     watchlist: list[dict[str, Any]],
     evidence_refs: list[str],
 ) -> SharedTradingContext:
+    runtime_config = load_agent_runtime_config()
     candidates = _candidate_symbols(focus, watchlist)
     latest_prices = {
         str(item.get("symbol")).upper(): float(item.get("current") or 0.0)
         for item in watchlist
         if item.get("symbol")
     }
+    data_quality_by_symbol = {
+        str(item.get("symbol")).upper(): dict(item.get("dataQuality") or {})
+        for item in watchlist
+        if item.get("symbol")
+    }
+    price_timestamp_by_symbol = {
+        symbol: str(quality.get("latestPriceAt"))
+        for symbol, quality in data_quality_by_symbol.items()
+        if quality.get("latestPriceAt")
+    }
     focus_symbol = str(focus.get("symbol") or "").upper()
     if focus_symbol:
         latest_prices[focus_symbol] = float(focus.get("quote", {}).get("current") or latest_prices.get(focus_symbol) or 0.0)
+        data_quality_by_symbol[focus_symbol] = dict(focus.get("dataQuality") or data_quality_by_symbol.get(focus_symbol) or {})
+        timestamp = focus.get("quote", {}).get("asOf") or data_quality_by_symbol[focus_symbol].get("latestPriceAt")
+        if timestamp:
+            price_timestamp_by_symbol[focus_symbol] = str(timestamp)
 
     return SharedTradingContext(
         market_state={
@@ -716,7 +798,10 @@ def build_shared_trading_context(
             "max_order_value": 120_000.0,
             "min_cash_ratio": 0.12,
             "max_single_symbol_share": 0.28,
+            "min_confidence_to_trade": runtime_config.min_confidence_to_trade,
         },
+        data_quality_by_symbol=data_quality_by_symbol,
+        price_timestamp_by_symbol=price_timestamp_by_symbol,
     )
 
 
@@ -762,7 +847,13 @@ def _status_for(
     if definition["company"] == "virtual-trading" and not context.market_state.get("is_open"):
         return "waiting_for_market"
     if agent_id == "trading-consensus-gate":
-        return consensus.status
+        return {
+            "approved_for_virtual_order": "success",
+            "hold_watch": "ready",
+            "needs_review": "warning",
+            "blocked": "blocked",
+            "waiting_for_market": "waiting_for_market",
+        }.get(consensus.status, "waiting")
     if agent_id == "academic-macro-research" and not context.evidence_refs:
         return "waiting"
     return "success"
@@ -829,25 +920,37 @@ def _logs_for(
     context: SharedTradingContext,
     consensus: TradingConsensus,
     trigger: str,
+    language: TemplateLanguageProvider | None = None,
 ) -> list[str]:
     phase = context.market_state.get("phase") or "unknown"
+    symbol = context.candidate_symbols[0] if context.candidate_symbols else "N/A"
+    evidence_line = (
+        f"evidence_refs={','.join(context.evidence_refs[:4])}"
+        if context.evidence_refs
+        else "根拠不足: evidence_refsなし"
+    )
+    template_line = (
+        language.pick("agent_logs", symbol, phase, agent_id, trigger, len(context.evidence_refs))
+        if language is not None
+        else f"{symbol}: Runtime heartbeatを更新しました。"
+    )
     if agent_id == "trading-consensus-gate":
-        return [consensus.reason, f"required_tasks={','.join(consensus.required_research_tasks) or 'none'}"]
+        return [template_line, consensus.reason, evidence_line, f"required_tasks={','.join(consensus.required_research_tasks) or 'none'}"]
     if agent_id == "virtual-trader-a":
-        return ["SharedTradingContextを読込", "買い・リバランス制約を評価", f"trigger={trigger}"]
+        return [template_line, "SharedTradingContextを読込", "買い・リバランス制約を評価", evidence_line, f"trigger={trigger}"]
     if agent_id == "virtual-trader-b":
-        return ["SharedTradingContextを読込", "売り・リスク削減制約を評価", f"trigger={trigger}"]
+        return [template_line, "SharedTradingContextを読込", "売り・リスク削減制約を評価", evidence_line, f"trigger={trigger}"]
     if agent_id == "news-source-collector":
-        return ["ニュースソースを確認", "RSS / yfinance news / 保存Evidenceを照合", f"phase={phase}"]
+        return [template_line, "ニュースソースを確認", "RSS / yfinance news / 保存Evidenceを照合", evidence_line, f"phase={phase}"]
     if agent_id == "news-intelligence":
-        return ["見出しEvidenceを正規化", "関連銘柄と論点を抽出", f"evidence_refs={len(context.evidence_refs)}"]
+        return [template_line, "見出しEvidenceを正規化", "関連銘柄と論点を抽出", evidence_line]
     if agent_id == "news-impact-analyst":
-        return ["ニュース鮮度を採点", "影響度をStrategy Outputへ渡す", f"phase={phase}"]
+        return [template_line, "ニュース鮮度を採点", "影響度をStrategy Outputへ渡す", evidence_line, f"phase={phase}"]
     if agent_id == "academic-macro-research":
-        return ["マクロ情報源を確認", "根拠不足ならwaiting_for_sourceへ戻す"]
+        return [template_line, "マクロ情報源を確認", "根拠不足ならwaiting_for_sourceへ戻す", evidence_line]
     if context.market_state.get("is_open"):
-        return ["市場中モード: 価格監視を優先", "完了後すぐに次タスクへ移行"]
-    return ["閉場後モード: 調査・分析を優先", "次回市場中の監視準備を更新"]
+        return [template_line, "市場中モード: 価格監視を優先", "完了後すぐに次タスクへ移行", evidence_line]
+    return [template_line, "閉場後モード: 調査・分析を優先", "次回市場中の監視準備を更新", evidence_line]
 
 
 def _company_waiting_reason(company_id: str, agents: list[dict[str, Any]]) -> str:

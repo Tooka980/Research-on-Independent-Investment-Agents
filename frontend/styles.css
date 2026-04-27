@@ -482,7 +482,8 @@ button {
 
 .agent-card-head,
 .agent-meta,
-.agent-counts {
+.agent-counts,
+.agent-diagnostics {
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -498,6 +499,7 @@ button {
 }
 
 .status-running,
+.status-busy,
 .status-success {
   color: var(--green);
 }
@@ -526,6 +528,15 @@ button {
   color: var(--red);
 }
 
+.process-card.status-error {
+  border-color: rgba(224,82,94,0.62);
+  background: rgba(224,82,94,0.08);
+}
+
+.process-card.status-restarting {
+  border-color: rgba(241,191,115,0.5);
+}
+
 .agent-status-line {
   margin-top: 8px;
   color: var(--text);
@@ -534,7 +545,9 @@ button {
 
 .agent-meta,
 .agent-task,
-.agent-counts {
+.agent-counts,
+.agent-diagnostics,
+.agent-error-line {
   margin-top: 8px;
   color: var(--muted);
   font-family: var(--mono);
@@ -544,6 +557,16 @@ button {
 .agent-task {
   line-height: 1.5;
   color: #b8b3aa;
+}
+
+.agent-diagnostics {
+  flex-wrap: wrap;
+}
+
+.agent-error-line {
+  color: var(--red);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .warning {
