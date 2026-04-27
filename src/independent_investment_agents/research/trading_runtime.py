@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from independent_investment_agents.core.agent_runtime import load_agent_runtime_config
+from independent_investment_agents.research.agent_reality import AgentRealityLayer
 from independent_investment_agents.research.llm_provider import TemplateLanguageProvider
 
 
@@ -138,6 +139,12 @@ class AgentRuntimeState:
     principles: list[str] = field(default_factory=list)
     completed_task_count: int = 0
     active_task_count: int = 0
+    agent_reality_type: str = "simulated_status"
+    last_real_task_at: str | None = None
+    last_real_evidence_id: str | None = None
+    last_real_decision_id: str | None = None
+    actual_processing_enabled: bool = False
+    reality_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -238,6 +245,18 @@ class AgentRuntimeStore:
                 )
                 """
             )
+            self._ensure_columns(
+                conn,
+                "runtime_states",
+                {
+                    "agent_reality_type": "TEXT NOT NULL DEFAULT 'simulated_status'",
+                    "last_real_task_at": "TEXT",
+                    "last_real_evidence_id": "TEXT",
+                    "last_real_decision_id": "TEXT",
+                    "actual_processing_enabled": "INTEGER NOT NULL DEFAULT 0",
+                    "reality_note": "TEXT NOT NULL DEFAULT ''",
+                },
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runtime_tasks (
@@ -272,8 +291,15 @@ class AgentRuntimeStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO runtime_states VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                INSERT OR REPLACE INTO runtime_states (
+                    agent_id, company, label_ja, label_en, role, status, latest_task,
+                    heartbeat_at, last_run_at, next_run_at, duration_ms, queue_depth,
+                    logs, principles, completed_task_count, active_task_count,
+                    agent_reality_type, last_real_task_at, last_real_evidence_id,
+                    last_real_decision_id, actual_processing_enabled, reality_note
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -293,6 +319,12 @@ class AgentRuntimeStore:
                     _json(state.principles),
                     state.completed_task_count,
                     state.active_task_count,
+                    state.agent_reality_type,
+                    state.last_real_task_at,
+                    state.last_real_evidence_id,
+                    state.last_real_decision_id,
+                    1 if state.actual_processing_enabled else 0,
+                    state.reality_note,
                 ),
             )
 
@@ -347,6 +379,12 @@ class AgentRuntimeStore:
             ).fetchone()
         return int(row[0] if row else 0)
 
+    def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
     @contextmanager
     def _connect(self) -> Any:
         conn = sqlite3.connect(self.database_path)
@@ -375,6 +413,12 @@ class AgentRuntimeStore:
             principles=[str(item) for item in _json_list(row["principles"])],
             completed_task_count=int(row["completed_task_count"]),
             active_task_count=int(row["active_task_count"]),
+            agent_reality_type=row["agent_reality_type"],
+            last_real_task_at=row["last_real_task_at"],
+            last_real_evidence_id=row["last_real_evidence_id"],
+            last_real_decision_id=row["last_real_decision_id"],
+            actual_processing_enabled=bool(row["actual_processing_enabled"]),
+            reality_note=row["reality_note"],
         )
 
     def _row_to_task(self, row: sqlite3.Row) -> AgentTask:
@@ -633,9 +677,16 @@ class AgentRuntimeEngine:
         now = datetime.now(UTC)
         active_agent = _agent_for_task(queue[0]["task"] if queue else "")
         states: list[AgentRuntimeState] = []
+        reality_layer = AgentRealityLayer()
         for index, definition in enumerate(AGENT_DEFINITIONS):
             status = _status_for(definition, context, consensus, active_agent)
             latest_task = _latest_task_for(definition["id"], context, consensus, queue)
+            reality = reality_layer.describe(
+                definition["id"],
+                latest_task=latest_task,
+                evidence_id=context.evidence_refs[0] if context.evidence_refs else None,
+                decision_id=None,
+            )
             duration_ms = 28 + ((self._tick_count + index) % 11) * 9
             task_status = "running" if definition["id"] == active_agent else ("waiting" if status.startswith("waiting") else "completed")
             completed_at = None if task_status in {"running", "waiting"} else utc_now_iso()
@@ -680,6 +731,12 @@ class AgentRuntimeEngine:
                 principles=list(definition.get("principles", [])),
                 completed_task_count=completed_count,
                 active_task_count=1 if task_status == "running" else 0,
+                agent_reality_type=reality["agent_reality_type"],
+                last_real_task_at=reality["last_real_task_at"],
+                last_real_evidence_id=reality["last_real_evidence_id"],
+                last_real_decision_id=reality["last_real_decision_id"],
+                actual_processing_enabled=bool(reality["actual_processing_enabled"]),
+                reality_note=reality["reality_note"],
             )
             self.store.save_state(state)
             states.append(state)

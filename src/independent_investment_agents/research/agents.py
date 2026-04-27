@@ -8,6 +8,8 @@ from independent_investment_agents.agents.base_agent import BaseAgent
 from independent_investment_agents.core.agent_runtime import AgentRuntime, AgentRuntimeConfig, load_agent_runtime_config
 from independent_investment_agents.core.task_queue import ErrorResult, TaskEnvelope, retry_call
 from independent_investment_agents.research.llm_provider import TemplateLanguageProvider
+from independent_investment_agents.research.decision_review import BearishCaseAnalyzer, InvalidationConditionBuilder
+from independent_investment_agents.research.evidence_quality import EvidenceQualityPolicy
 from independent_investment_agents.research.models import (
     AgentFinding,
     AgentRunContext,
@@ -18,6 +20,14 @@ from independent_investment_agents.research.models import (
     utc_now_iso,
 )
 from independent_investment_agents.research.repository import ResearchRepository, persist_run_results
+from independent_investment_agents.research.scoring import (
+    ExpectedReturnModel,
+    MultiFactorScoringEngine,
+    PositionSizingEngine,
+    RiskRewardScorer,
+    StopLossTakeProfitEngine,
+)
+from independent_investment_agents.research.symbol_queue import build_symbol_processing_plan
 
 
 class ResearchAgent(BaseAgent):
@@ -94,7 +104,7 @@ class MarketObserverAgent(ResearchAgent):
         if data_quality.get("hasAnalysisHistory"):
             evidence_id = f"ev-yf-ohlcv-{symbol.lower().replace('.', '-')}-{utc_now_iso()[:10].replace('-', '')}"
             evidence.append(
-                EvidenceRecord(
+                EvidenceQualityPolicy().apply(EvidenceRecord(
                     id=evidence_id,
                     source_type="price_history",
                     source_name=str(data_quality.get("priceSource") or "yfinance"),
@@ -112,7 +122,7 @@ class MarketObserverAgent(ResearchAgent):
                     credibility_score=0.86,
                     freshness_score=0.88,
                     impact_score=min(0.95, abs(change_pct) / 10.0 + 0.25),
-                )
+                ))
             )
             evidence_ids.append(evidence_id)
         task = ResearchTask(
@@ -178,7 +188,7 @@ class NewsIntelligenceAgent(ResearchAgent):
         for idx, item in enumerate(real_items):
             source_name = str(item.get("source") or "RSS")
             evidence.append(
-                EvidenceRecord(
+                EvidenceQualityPolicy().apply(EvidenceRecord(
                     id=f"ev-rss-news-{symbol.lower().replace('.', '-')}-{utc_now_iso()[:10].replace('-', '')}-{idx}",
                     source_type="news",
                     source_name=source_name,
@@ -196,7 +206,9 @@ class NewsIntelligenceAgent(ResearchAgent):
                     credibility_score=0.58 if item.get("source") == "News Agent" else 0.76,
                     freshness_score=0.94,
                     impact_score={"High": 0.9, "Medium": 0.64, "Low": 0.35}.get(str(item.get("impact")), 0.5),
-                )
+                    body_fetched=False,
+                    headline_only=True,
+                ))
             )
         finding = AgentFinding(
             agent_name=self.name,
@@ -251,7 +263,7 @@ class CompanyResearchAgent(ResearchAgent):
                 suggested_actions=["retry yfinance meta", "load saved company profile"],
             )
             return AgentRunResult(self.name, "waiting", ["company profile unavailable", "research task queued"], [task], [], [finding])
-        evidence = EvidenceRecord(
+        evidence = EvidenceQualityPolicy().apply(EvidenceRecord(
             id=f"ev-yf-meta-{symbol.lower().replace('.', '-')}-{utc_now_iso()[:10].replace('-', '')}",
             source_type="company_profile",
             source_name=meta_source,
@@ -272,7 +284,7 @@ class CompanyResearchAgent(ResearchAgent):
             credibility_score=0.72,
             freshness_score=0.7,
             impact_score=0.5,
-        )
+        ))
         finding = AgentFinding(
             agent_name=self.name,
             related_task_id=None,
@@ -373,15 +385,45 @@ class StrategySynthesisAgent(ResearchAgent):
                 suggested_actions=["collect OHLCV evidence", "collect company or news evidence"],
             )
             return AgentRunResult(self.name, "waiting", ["EvidenceGate blocked DecisionContext", "research task queued"], [task], [], [finding], [])
+        score = MultiFactorScoringEngine().score(
+            symbol_payload=context.focus,
+            portfolio_state=context.portfolio,
+            evidence_refs=evidence_ids,
+        )
+        expected_return = ExpectedReturnModel().estimate(score)
+        expected_risk = max(0.03, min(0.16, score.risk_score * 0.12))
+        risk_reward = RiskRewardScorer().ratio(expected_return, expected_risk)
+        target_value, size_reason = PositionSizingEngine().target_value(
+            equity=equity,
+            cash=cash,
+            score=score,
+            expected_risk=expected_risk,
+        )
+        current_price = float(quote.get("current") or quote.get("close") or 0.0)
+        stop_loss_plan, take_profit_plan, stop_price = StopLossTakeProfitEngine().build(
+            current_price=current_price,
+            expected_return=expected_return,
+            expected_risk=expected_risk,
+        )
         side = "buy"
-        decision_type = "virtual_rebalance_candidate"
-        order_type = "rebalance" if cash_ratio > 0.28 else "market"
+        decision_type = "buy_candidate" if score.total_score >= 0.52 else "small_buy_candidate"
+        order_type = "rebalance"
+        if score.total_score < 0.42:
+            decision_type = "research_more"
+            side = "hold"
+            order_type = "market"
         if change_pct < -4 and cash_ratio < 0.25:
             side = "sell"
-            decision_type = "virtual_risk_reduction_candidate"
+            decision_type = "risk_reduction_candidate"
             order_type = "liquidation"
-        target_value = max(10_000.0, min(cash * 0.08, equity * 0.04))
-        confidence = 0.68 if evidence_ids else 0.2
+        bearish_reasons = BearishCaseAnalyzer().analyze(context.focus)
+        bullish_reasons = [
+            f"multi_factor_total_score={score.total_score:.2f}",
+            f"evidence_refs={len(evidence_ids)}",
+            f"cash_ratio={cash_ratio:.2f}",
+        ]
+        invalidation_conditions = InvalidationConditionBuilder().build(symbol=symbol, stop_loss_plan=stop_loss_plan)
+        confidence = min(0.88, max(0.25, score.confidence_score))
         decision = DecisionContext(
             id=f"dc-research-{symbol.lower().replace('.', '-')}",
             target_symbol=symbol,
@@ -398,7 +440,22 @@ class StrategySynthesisAgent(ResearchAgent):
             side=side,
             order_type=order_type,
             target_value=target_value,
+            stop_price=stop_price,
             reason="Evidence-backed virtual capital growth policy candidate; not investment advice.",
+            bullish_reasons=bullish_reasons,
+            bearish_reasons=bearish_reasons,
+            counterarguments=bearish_reasons,
+            invalidation_conditions=invalidation_conditions,
+            alternative_scenarios=["watch_only if evidence weakens", "research_more if source reliability falls"],
+            what_would_change_our_mind=["missing body text resolved with contrary facts", "benchmark-relative momentum turns negative"],
+            recommended_holding_period="7d-30d simulation review",
+            stop_loss_plan=stop_loss_plan,
+            take_profit_plan=take_profit_plan,
+            position_size_reason=size_reason,
+            expected_return=expected_return,
+            expected_risk=expected_risk,
+            risk_reward_ratio=risk_reward,
+            data_as_of=str(context.focus.get("quote", {}).get("asOf") or utc_now_iso()),
         )
         finding = AgentFinding(
             agent_name=self.name,
@@ -492,7 +549,13 @@ class ResearchOrganization:
 
     def run_snapshot(self, context: AgentRunContext) -> dict[str, Any]:
         self.repository.ensure_schema()
-        context = self._limited_context(context)
+        symbol_plan = build_symbol_processing_plan(
+            focus_symbol=context.focus_symbol,
+            watchlist=context.watchlist,
+            positions=list(context.portfolio.get("positions") or []),
+            batch_size=self.config.max_symbols_per_cycle,
+        )
+        context = replace(context, symbol_processing=symbol_plan.to_dict())
         self.director.heartbeat()
         tasks = self.director.plan_tasks(context, self.agents)
         task_ids = self.runtime.submit_tasks(tasks)
@@ -519,24 +582,24 @@ class ResearchOrganization:
         self.repository.archive_low_value_evidence()
         markdown = self.repository.export_markdown()
         current_decisions = [decision for result in results for decision in result.decisions]
-        decisions = self.repository.list_decision_contexts(limit=8)
+        decisions = self.repository.list_decision_contexts(limit=50)
         latest_decision = current_decisions[-1].to_dict() if current_decisions else None
         runtime_snapshot = self.runtime.snapshot()
         return {
             "organizationDesk": self._organization_desk(results, runtime_snapshot),
             "researchTasks": [_clean_for_display(task.to_dict()) for task in self.repository.list_tasks(limit=12)],
             "evidenceSummary": self.repository.summary(),
-            "evidenceRecords": [_clean_for_display(item.to_dict()) for item in self.repository.list_evidence(limit=8)],
+            "evidenceRecords": [_clean_for_display(item.to_dict()) for item in self.repository.list_evidence(limit=50)],
             "agentFindings": [_clean_for_display(item.to_dict()) for item in self.repository.list_findings(limit=10)],
             "decisionContexts": [_clean_for_display(item.to_dict()) for item in decisions],
             "latestDecisionContext": _clean_for_display(latest_decision),
             "researchMarkdown": _clean_for_display(markdown),
             "researchRuntime": _clean_for_display(runtime_snapshot),
+            "symbolProcessing": _clean_for_display(symbol_plan.to_dict()),
         }
 
     def _limited_context(self, context: AgentRunContext) -> AgentRunContext:
-        limit = max(1, int(self.config.max_symbols_per_cycle))
-        return replace(context, watchlist=list(context.watchlist[:limit]))
+        return context
 
     def _error_result_for(self, agent: ResearchAgent, error: ErrorResult) -> AgentRunResult:
         finding = AgentFinding(
@@ -592,6 +655,11 @@ class ResearchOrganization:
                     "lastError": runtime_state.get("last_error"),
                     "restartCount": runtime_state.get("restart_count", 0),
                     "queuedTaskCount": runtime_state.get("queued_task_count", 0),
+                    "agent_reality_type": "real_worker",
+                    "last_real_task_at": runtime_state.get("last_heartbeat"),
+                    "last_real_evidence_id": (result.evidence[-1].id if result.evidence else None),
+                    "last_real_decision_id": (result.decisions[-1].id if result.decisions else None),
+                    "actual_processing_enabled": True,
                     "logs": result.logs[-4:],
                     "tasks": len(result.tasks),
                     "evidence": len(result.evidence),
@@ -612,6 +680,11 @@ class ResearchOrganization:
                 "lastError": director_state.get("last_error"),
                 "restartCount": director_state.get("restart_count", 0),
                 "queuedTaskCount": director_state.get("queued_task_count", 0),
+                "agent_reality_type": "real_worker",
+                "last_real_task_at": director_state.get("last_heartbeat"),
+                "last_real_evidence_id": None,
+                "last_real_decision_id": None,
+                "actual_processing_enabled": True,
                 "logs": ["task queue planned", f"activity_level={self.config.activity_level}"],
                 "tasks": (runtime_snapshot or {}).get("queue", {}).get("pendingCount", 0),
                 "evidence": 0,

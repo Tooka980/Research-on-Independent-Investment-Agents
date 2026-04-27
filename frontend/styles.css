@@ -360,6 +360,8 @@ button {
   gap: 0;
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
+  max-height: 560px;
+  overflow: auto;
 }
 
 .watch-card {
@@ -461,6 +463,55 @@ button {
   display: grid;
   grid-template-columns: repeat(4, minmax(180px, 1fr));
   gap: 18px;
+}
+
+.performance-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+  margin-bottom: 18px;
+}
+
+.queue-metrics > div {
+  background: var(--bg);
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+}
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.queue-chip {
+  border: 1px solid var(--line);
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--mono);
+}
+
+.agent-reality,
+.universe-line {
+  margin-top: 8px;
+  color: var(--blue);
+  font-family: var(--mono);
+  font-size: 10px;
 }
 
 .analysis-tile {
@@ -645,6 +696,8 @@ button {
   }
   .summary-grid,
   .analysis-grid,
+  .performance-grid,
+  .queue-metrics,
   .process-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -673,6 +726,8 @@ button {
   .summary-grid,
   .analysis-grid,
   .process-grid,
+  .performance-grid,
+  .queue-metrics,
   .watch-grid,
   .info-strip {
     grid-template-columns: 1fr;

@@ -58,6 +58,13 @@ const DEMO = {
   tradingConsensus: {},
   runtimeQueue: [],
   sharedTradingContext: {},
+  symbolProcessing: { total_watchlist_symbols: 0, total_position_symbols: 0, processingCount: 0, pendingCount: 0, completedCount: 0, queue: [] },
+  performance: { portfolioEquity: 0, virtualTotalAssets: 0, totalReturnPct: 0, maxDrawdownPct: 0, sharpeRatio: 0, winRate: 0, profitFactor: 0, benchmarkExcessReturnPct: null, benchmarkStatus: "data_unavailable" },
+  decisionOutcomes: [],
+  agentContribution: [],
+  evidenceContribution: [],
+  universeCandidates: [],
+  simulationMode: { name: "PaperLiveMode", benchmarkSymbol: "^N225" },
 };
 
 function clsFor(value) {
@@ -147,6 +154,9 @@ function buildAgentHealthSnapshot(previousAgents, context) {
       progress: remote.progress ?? (status === "success" ? 100 : status === "running" ? 82 : status.startsWith("waiting") ? 42 : status === "blocked" ? 25 : 60),
       dataSuccessRate: remote.dataSuccessRate ?? (status === "blocked" || status === "waiting_for_data" ? 0 : 1),
       newsSuccessRate: remote.newsSuccessRate ?? 1,
+      agentRealityType: remote.agent_reality_type || remote.agentRealityType || "simulated_status",
+      actualProcessingEnabled: remote.actual_processing_enabled ?? remote.actualProcessingEnabled ?? false,
+      realityNote: remote.reality_note || remote.realityNote || "",
       logs,
       terminal: remote.terminal || terminal,
     };
@@ -439,6 +449,13 @@ function App() {
   const tradeProposals = liveData.tradeProposals || [];
   const tradingConsensus = liveData.tradingConsensus || {};
   const runtimeQueue = liveData.runtimeQueue || [];
+  const symbolProcessing = liveData.symbolProcessing || DEMO.symbolProcessing;
+  const performance = liveData.performance || DEMO.performance;
+  const decisionOutcomes = liveData.decisionOutcomes || [];
+  const agentContribution = liveData.agentContribution || [];
+  const evidenceContribution = liveData.evidenceContribution || [];
+  const universeCandidates = liveData.universeCandidates || [];
+  const simulationMode = liveData.simulationMode || DEMO.simulationMode;
   useEffect(() => {
     agentContextRef.current = {
       focus,
@@ -557,6 +574,16 @@ function App() {
           ))}
         </div>
       </section>
+
+      <PerformanceDashboard
+        performance={performance}
+        outcomes={decisionOutcomes}
+        agentContribution={agentContribution}
+        evidenceContribution={evidenceContribution}
+        simulationMode={simulationMode}
+      />
+
+      <SymbolProcessingPanel plan={symbolProcessing} universeCandidates={universeCandidates} />
 
       <section className="band">
         <div className="section-head">
@@ -949,9 +976,10 @@ function CompanyRuntimeDesk({ companies, tradeProposals, tradingConsensus, runti
                       <div className="company-agent-ja">{agent.label_ja}</div>
                       <div className="tiny-label">{agent.label_en}</div>
                     </div>
-                    <div className="company-agent-state">
-                      <span className={`agent-status status-${agent.status}`}>{agent.status}</span>
-                      <span className="metric-note">{agent.latest_task}</span>
+                  <div className="company-agent-state">
+                    <span className={`agent-status status-${agent.status}`}>{agent.status}</span>
+                    <span className="metric-note">{agent.agent_reality_type || "simulated_status"}</span>
+                    <span className="metric-note">{agent.latest_task}</span>
                       <span className="metric-note">{(agent.principles || []).slice(0, 2).join(" / ")}</span>
                     </div>
                   </div>
@@ -995,6 +1023,63 @@ function CompanyRuntimeDesk({ companies, tradeProposals, tradingConsensus, runti
           />
         </div>
       </details>
+    </section>
+  );
+}
+
+function PerformanceDashboard({ performance, outcomes, agentContribution, evidenceContribution, simulationMode }) {
+  const metrics = performance || {};
+  return (
+    <section className="band performance-band">
+      <div className="section-head">
+        <div>
+          <div className="section-kicker">PERFORMANCE / VIRTUAL ASSET MAXIMIZATION</div>
+          <div className="section-title">検証可能な成果</div>
+        </div>
+        <div className="tiny-label">{simulationMode?.name || "PaperLiveMode"} / BENCH {simulationMode?.benchmarkSymbol || "^N225"} / {metrics.benchmarkStatus || "unknown"}</div>
+      </div>
+      <div className="performance-grid">
+        <Metric label="PORTFOLIO EQUITY" title="virtual equity" value={yen.format(metrics.portfolioEquity || 0)} note={`assets ${yen.format(metrics.virtualTotalAssets || 0)}`} />
+        <Metric label="TOTAL RETURN" title="return" value={`${number.format(metrics.totalReturnPct || 0)}%`} note={`annualized ${number.format(metrics.annualizedReturnPct || 0)}%`} signed={metrics.totalReturnPct} />
+        <Metric label="MAX DRAWDOWN" title="risk" value={`${number.format(metrics.maxDrawdownPct || 0)}%`} note={`sharpe ${number.format(metrics.sharpeRatio || 0)}`} signed={-Number(metrics.maxDrawdownPct || 0)} />
+        <Metric label="BENCH EXCESS" title="benchmark" value={metrics.benchmarkExcessReturnPct == null ? "N/A" : `${number.format(metrics.benchmarkExcessReturnPct)}%`} note={`win ${number.format((metrics.winRate || 0) * 100)}% / PF ${number.format(metrics.profitFactor || 0)}`} signed={metrics.benchmarkExcessReturnPct || 0} />
+      </div>
+      <div className="research-ledger">
+        <ResearchLedger title="DECISION OUTCOMES" rows={(outcomes || []).slice(-6)} getMain={(row) => `${row.target_symbol} / ${row.final_outcome}`} getMeta={(row) => formatSignedYen(row.contribution_to_equity || 0)} />
+        <ResearchLedger title="AGENT CONTRIBUTION" rows={(agentContribution || []).slice(0, 6).map((row, idx) => ({ ...row, id: row.agent || idx }))} getMain={(row) => row.agent} getMeta={(row) => `${number.format((row.winRate || 0) * 100)}%`} />
+        <ResearchLedger title="EVIDENCE CONTRIBUTION" rows={(evidenceContribution || []).slice(0, 6).map((row, idx) => ({ ...row, id: row.sourceType || idx }))} getMain={(row) => row.sourceType} getMeta={(row) => formatSignedYen(row.contributionToEquity || 0)} />
+      </div>
+    </section>
+  );
+}
+
+function SymbolProcessingPanel({ plan, universeCandidates }) {
+  const queue = plan?.queue || [];
+  return (
+    <section className="band">
+      <div className="section-head">
+        <div>
+          <div className="section-kicker">SYMBOL QUEUE / WATCHLIST & POSITIONS</div>
+          <div className="section-title">処理対象キュー</div>
+        </div>
+        <div className="tiny-label">WATCH {plan?.total_watchlist_symbols || 0} / POS {plan?.total_position_symbols || 0} / UNIQUE {plan?.total_unique_symbols || 0}</div>
+      </div>
+      <div className="queue-metrics">
+        <div><span>processing</span><strong>{plan?.processingCount || 0}</strong></div>
+        <div><span>pending</span><strong>{plan?.pendingCount || 0}</strong></div>
+        <div><span>completed</span><strong>{plan?.completedCount || 0}</strong></div>
+        <div><span>batch</span><strong>{plan?.batch_size || 0}</strong></div>
+      </div>
+      {plan?.limit_reason && <div className="virtual-safety">{plan.limit_reason}</div>}
+      <div className="queue-grid">
+        {queue.map((item) => (
+          <div className={`queue-chip status-${item.status}`} key={item.symbol}>
+            <strong>{item.symbol}</strong>
+            <span>{item.status}</span>
+          </div>
+        ))}
+      </div>
+      <div className="tiny-label universe-line">UNIVERSE CANDIDATES {(universeCandidates || []).length}</div>
     </section>
   );
 }
@@ -1313,6 +1398,7 @@ function AgentProcessCard({ item, visibleCount }) {
         <span className={`agent-status status-${item.status}`}>{item.status}</span>
       </div>
       <div className="agent-status-line">{item.statusLabel}</div>
+      <div className="agent-reality">{item.agentRealityType}{item.actualProcessingEnabled ? " / real" : " / display"}</div>
       <div className="agent-meta">
         <span>最終 {item.lastRunAt ? new Date(item.lastRunAt).toLocaleTimeString("ja-JP") : "—"}</span>
         <span>HB {item.heartbeatAge ?? 0}s</span>

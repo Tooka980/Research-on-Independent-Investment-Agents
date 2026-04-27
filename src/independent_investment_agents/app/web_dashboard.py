@@ -35,6 +35,16 @@ from independent_investment_agents.research import (
 )
 from independent_investment_agents.repositories.virtual_order_repository import VirtualOrderRepository
 from independent_investment_agents.simulation.virtual_execution import VirtualSimulationEngine
+from independent_investment_agents.performance import (
+    AgentContributionScorer,
+    DecisionOutcomeTracker,
+    EvidenceContributionScorer,
+    PerformanceRepository,
+    VirtualTradePerformanceTracker,
+)
+from independent_investment_agents.research.simulation_modes import PaperLiveMode
+from independent_investment_agents.research.symbol_queue import build_symbol_processing_plan
+from independent_investment_agents.research.universe import MomentumDiscoveryAgent, UniverseManager, VolumeSpikeDiscoveryAgent
 
 try:
     import pandas as pd
@@ -55,6 +65,7 @@ SESSION_FILE = ARTIFACTS_DIR / "live_session" / "paper_session.json"
 RUNS_DIR = ARTIFACTS_DIR / "runs"
 VIRTUAL_ORDERS_DIR = ARTIFACTS_DIR / "virtual_orders"
 RESEARCH_DIR = ARTIFACTS_DIR / "research"
+PERFORMANCE_DIR = ARTIFACTS_DIR / "performance"
 PORTFOLIO_DIR = ARTIFACTS_DIR / "portfolio"
 WATCHLIST_FILE = PORTFOLIO_DIR / "watchlist.json"
 POSITIONS_FILE = PORTFOLIO_DIR / "positions.json"
@@ -311,6 +322,10 @@ class DashboardService:
         self.research_organization = ResearchOrganization(self.research_repository)
         self.agent_runtime_engine = AgentRuntimeEngine(start_background=True)
         self.strategy_output_engine = StrategyOutputEngine()
+        self.performance_repository = PerformanceRepository(PERFORMANCE_DIR)
+        self.performance_tracker = VirtualTradePerformanceTracker()
+        self.decision_outcome_tracker = DecisionOutcomeTracker()
+        self.universe_manager = UniverseManager()
 
     def _load_session(self) -> dict[str, Any]:
         if SESSION_FILE.exists():
@@ -1044,6 +1059,12 @@ class DashboardService:
                     "errorCount": state.get("error_count", 1 if status == "error" else 0),
                     "dataSuccessRate": 1.0 if status not in {"error", "blocked", "waiting_for_data"} else 0.0,
                     "newsSuccessRate": 1.0,
+                    "agent_reality_type": state.get("agent_reality_type", "simulated_status"),
+                    "actual_processing_enabled": bool(state.get("actual_processing_enabled", False)),
+                    "last_real_task_at": state.get("last_real_task_at"),
+                    "last_real_evidence_id": state.get("last_real_evidence_id"),
+                    "last_real_decision_id": state.get("last_real_decision_id"),
+                    "reality_note": state.get("reality_note", ""),
                     "logs": logs,
                     "terminal": [f"{agent_id.upper().replace('-', '_')} > {latest_task}", *logs],
                 }
@@ -1062,8 +1083,14 @@ class DashboardService:
         focus_symbol = focus_symbol.strip().upper() if focus_symbol else (stored_watch_symbols[0] if stored_watch_symbols else SEED_WATCH_SYMBOLS[0])
         if focus_symbol not in universe:
             universe.insert(0, focus_symbol)
+        initial_symbol_plan = build_symbol_processing_plan(
+            focus_symbol=focus_symbol,
+            watchlist=[{"symbol": symbol, "changePct": 0.0} for symbol in universe],
+            positions=[position.__dict__ for position in portfolio_positions],
+            batch_size=self.research_organization.config.max_symbols_per_cycle,
+        )
         display_histories = self._fetch_history_batch(universe, "1mo")
-        analysis_histories = self._fetch_history_batch(universe, "all", analysis=True)
+        analysis_histories = self._fetch_history_batch(initial_symbol_plan.processing_symbols, "all", analysis=True)
         meta_lookup = {symbol: self._fetch_meta(symbol) for symbol in universe}
         focus_selected_history = (
             display_histories.get(focus_symbol, [])
@@ -1175,6 +1202,7 @@ class DashboardService:
                 watchlist=watchlist,
             )
         )
+        symbol_processing = research_snapshot.get("symbolProcessing") or initial_symbol_plan.to_dict()
         latest_decision_context = research_snapshot.get("latestDecisionContext") or {}
         shared_trading_context = build_shared_trading_context(
             focus=focus,
@@ -1216,6 +1244,54 @@ class DashboardService:
             holdings_rows,
             market,
             consensus_decision_context,
+        )
+        benchmark_history = self._fetch_history("^N225", "all", analysis=True)
+        equity_point = self.performance_tracker.build_point(
+            equity=total_equity,
+            cash=current_cash,
+            holdings_value=holdings_value,
+        ).to_dict()
+        self.performance_repository.append_equity_point(equity_point)
+        price_history_by_symbol = {
+            symbol: (payload_lookup.get(symbol, {}).get("fullHistory") or payload_lookup.get(symbol, {}).get("candles") or [])
+            for symbol in universe
+        }
+        outcomes = self.decision_outcome_tracker.evaluate(
+            list(research_snapshot.get("decisionContexts") or []),
+            price_history_by_symbol=price_history_by_symbol,
+            benchmark_history=benchmark_history,
+        )
+        self.performance_repository.save_outcomes(outcomes)
+        decision_outcomes = self.performance_repository.read_outcomes(limit=100)
+        equity_points = self.performance_repository.read_equity_points(limit=500)
+        performance = {
+            **self.performance_tracker.summarize(
+                equity_points,
+                benchmark_points=benchmark_history,
+                initial_equity=INITIAL_CASH,
+            ),
+            "benchmarkSymbol": "^N225",
+            "equityPoints": [
+                {
+                    "time": item.get("timestamp") or item.get("time"),
+                    "equity": item.get("equity"),
+                    "cash": item.get("cash"),
+                    "holdings": item.get("holdings_value") or item.get("holdings"),
+                }
+                for item in equity_points
+            ],
+        }
+        evidence_records = list(research_snapshot.get("evidenceRecords") or [])
+        agent_findings = list(research_snapshot.get("agentFindings") or [])
+        agent_contribution = AgentContributionScorer().score(decision_outcomes, agent_findings)
+        evidence_contribution = EvidenceContributionScorer().score(decision_outcomes, evidence_records)
+        universe_candidates = self.universe_manager.build_universe(
+            watchlist=watchlist,
+            positions=holdings_rows,
+            discovered=[
+                *MomentumDiscoveryAgent().discover(watchlist),
+                *VolumeSpikeDiscoveryAgent().discover(watchlist),
+            ],
         )
         process_items = [
             *self._runtime_process_items(runtime_snapshot),
@@ -1293,6 +1369,17 @@ class DashboardService:
             "watchlist": watchlist,
             "watchlistCount": len(watchlist),
             "positionsCount": len(holdings_rows),
+            "symbolProcessing": symbol_processing,
+            "performance": performance,
+            "decisionOutcomes": decision_outcomes,
+            "agentContribution": agent_contribution,
+            "evidenceContribution": evidence_contribution,
+            "universeCandidates": [candidate.to_dict() for candidate in universe_candidates[:100]],
+            "simulationMode": {
+                **PaperLiveMode().to_dict(),
+                "benchmarkSymbol": "^N225",
+                "benchmarkStatus": performance.get("benchmarkStatus"),
+            },
             "dataQuality": {
                 "focus": focus.get("dataQuality", {}),
                 "universe": {

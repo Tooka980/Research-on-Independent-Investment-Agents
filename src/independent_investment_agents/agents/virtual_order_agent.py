@@ -30,16 +30,28 @@ class VirtualOrderAgent:
             return ResearchTask(
                 task_type="missing_evidence_for_virtual_order",
                 target_symbols=[symbol] if symbol else [],
-                topic="仮想注文の根拠確認",
-                reason="DecisionContext に evidence_refs がないため、VirtualOrder は作成しません。",
+                topic="virtual order evidence check",
+                reason="DecisionContext has no evidence_refs, so no virtual order is created.",
+                priority=1,
+            )
+        if _requires_trade_plan(decision_context) and (
+            not decision_context.get("stop_loss_plan")
+            or not decision_context.get("take_profit_plan")
+            or not decision_context.get("position_size_reason")
+        ):
+            return ResearchTask(
+                task_type="missing_trade_plan_for_virtual_order",
+                target_symbols=[symbol],
+                topic="virtual order risk controls",
+                reason="Actionable buy/sell candidates require stop_loss_plan, take_profit_plan, and position_size_reason.",
                 priority=1,
             )
         if not price or price <= 0:
             return ResearchTask(
                 task_type="missing_price_for_virtual_order",
                 target_symbols=[symbol],
-                topic="仮想注文の価格確認",
-                reason="市場価格が欠損しているため、VirtualOrder は作成しません。",
+                topic="virtual order price check",
+                reason="Market price is missing, so no virtual order is created.",
                 priority=1,
             )
 
@@ -70,8 +82,15 @@ class VirtualOrderAgent:
             created_by_agent=self.name,
             related_decision_context_id=str(decision_context.get("id") or f"dc-{symbol.lower()}"),
             related_evidence_ids=evidence_refs,
-            reason=str(decision_context.get("reason") or decision_context.get("final_recommendation_for_simulation") or "根拠付きの仮想注文候補。"),
-            notes="アプリ内シミュレーション専用。外部注文送信は行いません。",
+            reason=str(decision_context.get("reason") or decision_context.get("final_recommendation_for_simulation") or "Evidence-backed virtual order candidate."),
+            notes="Application-local virtual simulation only. No broker API or real order is used.",
+            position_size_reason=str(decision_context.get("position_size_reason") or ""),
+            stop_loss_plan=str(decision_context.get("stop_loss_plan") or ""),
+            take_profit_plan=str(decision_context.get("take_profit_plan") or ""),
+            expected_return=_safe_float(decision_context.get("expected_return")),
+            expected_risk=_safe_float(decision_context.get("expected_risk")),
+            risk_reward_ratio=_safe_float(decision_context.get("risk_reward_ratio")),
+            confidence=_safe_float(decision_context.get("confidence")),
         )
 
 
@@ -114,6 +133,10 @@ class VirtualRiskAgent:
         if not data_quality_check:
             failed.append("missing_ohlcv")
 
+        trade_plan_check = bool(order.stop_loss_plan and order.take_profit_plan and order.position_size_reason)
+        if not trade_plan_check and order.related_decision_context_id.startswith(("dc-research", "dc-consensus")):
+            failed.append("missing_virtual_trade_plan")
+
         if order.order_type == "market":
             warnings.append("market_simulation_uses_configured_close_price")
 
@@ -128,7 +151,8 @@ class VirtualRiskAgent:
             evidence_check=evidence_check,
             price_sanity_check=price_sanity_check,
             data_quality_check=data_quality_check,
-            explanation="仮想注文のリスクチェックを通過しました。" if passed else "仮想注文はリスク制約により停止しました。",
+            trade_plan_check=trade_plan_check,
+            explanation="virtual order passed risk checks" if passed else "virtual order rejected by risk controls",
         )
 
 
@@ -164,6 +188,13 @@ class CapitalGrowthPolicy:
             "related_evidence_ids": evidence_refs,
             "reason": "Virtual-only capital growth policy with risk and evidence gates. No real order.",
             "final_recommendation_for_simulation": "Create a simulated order candidate only when evidence and risk gates pass.",
+            "position_size_reason": "policy default: capped by cash and equity",
+            "stop_loss_plan": "policy default: stop if thesis fails or price breaks risk band",
+            "take_profit_plan": "policy default: review after favorable move or target band",
+            "expected_return": 0.03,
+            "expected_risk": 0.02,
+            "risk_reward_ratio": 1.5,
+            "confidence": 0.55,
         }
 
 
@@ -175,7 +206,7 @@ def apply_risk_result(order: VirtualOrder, risk: RiskCheckResult) -> VirtualOrde
 
 def _normalize_side(value: Any) -> str:
     text = str(value or "buy").lower()
-    return "sell" if "sell" in text or "売" in text or "liquidation" in text else "buy"
+    return "sell" if "sell" in text or "liquidation" in text or "risk_reduction" in text else "buy"
 
 
 def _normalize_order_type(value: Any) -> str:
@@ -183,6 +214,16 @@ def _normalize_order_type(value: Any) -> str:
     if text in {"limit", "stop", "rebalance", "liquidation"}:
         return text
     return "market"
+
+
+def _requires_trade_plan(decision_context: dict[str, Any]) -> bool:
+    text = f"{decision_context.get('decision_type')} {decision_context.get('side')}".lower()
+    return (
+        "buy_candidate" in text
+        or "sell_candidate" in text
+        or "risk_reduction_candidate" in text
+        or "rebalance_candidate" in text
+    )
 
 
 def _safe_float(value: Any) -> float | None:

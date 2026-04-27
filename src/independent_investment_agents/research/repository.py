@@ -14,6 +14,7 @@ from independent_investment_agents.research.models import (
     json_dumps,
     json_loads_list,
 )
+from independent_investment_agents.research.task_policies import TaskDeduplicator, TaskTTL
 
 
 class ResearchRepository:
@@ -69,6 +70,20 @@ class ResearchRepository:
                 )
                 """
             )
+            self._ensure_columns(
+                conn,
+                "evidence_records",
+                {
+                    "score_reason": "TEXT NOT NULL DEFAULT ''",
+                    "source_reliability_basis": "TEXT NOT NULL DEFAULT ''",
+                    "verified_body": "INTEGER NOT NULL DEFAULT 0",
+                    "body_fetched": "INTEGER NOT NULL DEFAULT 0",
+                    "headline_only": "INTEGER NOT NULL DEFAULT 0",
+                    "used_in_decisions": "TEXT NOT NULL DEFAULT '[]'",
+                    "outcome_score": "REAL",
+                    "available_at": "TEXT",
+                },
+            )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_hash ON evidence_records(evidence_hash)")
             conn.execute(
                 """
@@ -111,6 +126,26 @@ class ResearchRepository:
                 )
                 """
             )
+            self._ensure_columns(
+                conn,
+                "decision_contexts",
+                {
+                    "bullish_reasons": "TEXT NOT NULL DEFAULT '[]'",
+                    "bearish_reasons": "TEXT NOT NULL DEFAULT '[]'",
+                    "counterarguments": "TEXT NOT NULL DEFAULT '[]'",
+                    "invalidation_conditions": "TEXT NOT NULL DEFAULT '[]'",
+                    "alternative_scenarios": "TEXT NOT NULL DEFAULT '[]'",
+                    "what_would_change_our_mind": "TEXT NOT NULL DEFAULT '[]'",
+                    "recommended_holding_period": "TEXT NOT NULL DEFAULT ''",
+                    "stop_loss_plan": "TEXT NOT NULL DEFAULT ''",
+                    "take_profit_plan": "TEXT NOT NULL DEFAULT ''",
+                    "position_size_reason": "TEXT NOT NULL DEFAULT ''",
+                    "expected_return": "REAL",
+                    "expected_risk": "REAL",
+                    "risk_reward_ratio": "REAL",
+                    "data_as_of": "TEXT",
+                },
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS knowledge_memory (
@@ -131,6 +166,18 @@ class ResearchRepository:
     def save_task(self, task: ResearchTask) -> ResearchTask:
         self.ensure_schema()
         with self._connect() as conn:
+            if task.status not in {"completed", "blocked", "stale"}:
+                existing_rows = list(
+                    conn.execute(
+                        "SELECT * FROM research_tasks WHERE status NOT IN ('completed', 'blocked', 'stale')"
+                    )
+                )
+                existing_tasks = [self._row_to_task(row) for row in existing_rows]
+                merge = TaskDeduplicator().is_duplicate(task, existing_tasks)
+                if merge.action == "merge" and merge.existing_task_id:
+                    match = next((item for item in existing_tasks if item.id == merge.existing_task_id), None)
+                    if match is not None:
+                        return match
             conn.execute(
                 """
                 INSERT OR REPLACE INTO research_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -158,8 +205,16 @@ class ResearchRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO evidence_records VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                INSERT OR REPLACE INTO evidence_records (
+                    id, source_type, source_name, url_or_path, title, published_at, collected_at,
+                    related_symbols, related_topics, raw_text_path, summary, extracted_facts,
+                    sentiment_score, relevance_score, credibility_score, freshness_score, impact_score,
+                    duplicate_of, archived, evidence_hash, conflict_with, score_reason,
+                    source_reliability_basis, verified_body, body_fetched, headline_only,
+                    used_in_decisions, outcome_score, available_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -184,6 +239,14 @@ class ResearchRepository:
                     1 if evidence.archived else 0,
                     evidence.evidence_hash,
                     json_dumps(evidence.conflict_with),
+                    evidence.score_reason,
+                    evidence.source_reliability_basis,
+                    1 if evidence.verified_body else 0,
+                    1 if evidence.body_fetched else 0,
+                    1 if evidence.headline_only else 0,
+                    json_dumps(evidence.used_in_decisions),
+                    evidence.outcome_score,
+                    evidence.available_at,
                 ),
             )
         return evidence
@@ -213,8 +276,18 @@ class ResearchRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO decision_contexts VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                INSERT OR REPLACE INTO decision_contexts (
+                    id, target_symbol, decision_type, related_evidence_ids, related_findings,
+                    market_state_summary, company_summary, news_summary, risk_summary,
+                    final_recommendation_for_simulation, confidence, missing_information, created_at,
+                    side, order_type, target_value, limit_price, stop_price, reason,
+                    bullish_reasons, bearish_reasons, counterarguments, invalidation_conditions,
+                    alternative_scenarios, what_would_change_our_mind, recommended_holding_period,
+                    stop_loss_plan, take_profit_plan, position_size_reason, expected_return,
+                    expected_risk, risk_reward_ratio, data_as_of
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -237,6 +310,20 @@ class ResearchRepository:
                     decision.limit_price,
                     decision.stop_price,
                     decision.reason,
+                    json_dumps(decision.bullish_reasons),
+                    json_dumps(decision.bearish_reasons),
+                    json_dumps(decision.counterarguments),
+                    json_dumps(decision.invalidation_conditions),
+                    json_dumps(decision.alternative_scenarios),
+                    json_dumps(decision.what_would_change_our_mind),
+                    decision.recommended_holding_period,
+                    decision.stop_loss_plan,
+                    decision.take_profit_plan,
+                    decision.position_size_reason,
+                    decision.expected_return,
+                    decision.expected_risk,
+                    decision.risk_reward_ratio,
+                    decision.data_as_of,
                 ),
             )
         return decision
@@ -271,6 +358,7 @@ class ResearchRepository:
         return self._row_to_evidence(row) if row else None
 
     def list_tasks(self, limit: int = 20) -> list[ResearchTask]:
+        self._mark_stale_tasks()
         return [self._row_to_task(row) for row in self._fetch("research_tasks", "created_at", limit)]
 
     def list_evidence(self, limit: int = 20) -> list[EvidenceRecord]:
@@ -344,6 +432,23 @@ class ResearchRepository:
         with self._connect() as conn:
             return list(conn.execute(f"SELECT * FROM {table} ORDER BY {order_column} ASC LIMIT ?", (limit,)))
 
+    def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    def _mark_stale_tasks(self) -> None:
+        self.ensure_schema()
+        ttl = TaskTTL()
+        with self._connect() as conn:
+            rows = list(conn.execute("SELECT * FROM research_tasks WHERE status IN ('open', 'waiting', 'waiting_for_source')"))
+            for row in rows:
+                task = self._row_to_task(row)
+                status = ttl.status_for(task)
+                if status != task.status:
+                    conn.execute("UPDATE research_tasks SET status = ? WHERE id = ?", (status, task.id))
+
     @contextmanager
     def _connect(self) -> Any:
         conn = sqlite3.connect(self.database_path)
@@ -391,6 +496,14 @@ class ResearchRepository:
             archived=bool(row["archived"]),
             evidence_hash=row["evidence_hash"],
             conflict_with=[str(item) for item in json_loads_list(row["conflict_with"])],
+            score_reason=row["score_reason"],
+            source_reliability_basis=row["source_reliability_basis"],
+            verified_body=bool(row["verified_body"]),
+            body_fetched=bool(row["body_fetched"]),
+            headline_only=bool(row["headline_only"]),
+            used_in_decisions=[str(item) for item in json_loads_list(row["used_in_decisions"])],
+            outcome_score=row["outcome_score"],
+            available_at=row["available_at"],
         )
 
     def _row_to_finding(self, row: sqlite3.Row) -> AgentFinding:
@@ -428,6 +541,20 @@ class ResearchRepository:
             limit_price=row["limit_price"],
             stop_price=row["stop_price"],
             reason=row["reason"],
+            bullish_reasons=[str(item) for item in json_loads_list(row["bullish_reasons"])],
+            bearish_reasons=[str(item) for item in json_loads_list(row["bearish_reasons"])],
+            counterarguments=[str(item) for item in json_loads_list(row["counterarguments"])],
+            invalidation_conditions=[str(item) for item in json_loads_list(row["invalidation_conditions"])],
+            alternative_scenarios=[str(item) for item in json_loads_list(row["alternative_scenarios"])],
+            what_would_change_our_mind=[str(item) for item in json_loads_list(row["what_would_change_our_mind"])],
+            recommended_holding_period=row["recommended_holding_period"],
+            stop_loss_plan=row["stop_loss_plan"],
+            take_profit_plan=row["take_profit_plan"],
+            position_size_reason=row["position_size_reason"],
+            expected_return=row["expected_return"],
+            expected_risk=row["expected_risk"],
+            risk_reward_ratio=row["risk_reward_ratio"],
+            data_as_of=row["data_as_of"],
         )
 
 

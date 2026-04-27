@@ -51,6 +51,7 @@ class RiskCheckResult:
     evidence_check: bool = True
     price_sanity_check: bool = True
     data_quality_check: bool = True
+    trade_plan_check: bool = True
     id: str = field(default_factory=lambda: f"vrisk-{uuid4().hex}")
     created_at: str = field(default_factory=utc_now_iso)
 
@@ -79,6 +80,13 @@ class VirtualOrder:
     simulated_executed_at: str | None = None
     simulated_execution_price: float | None = None
     notes: str = ""
+    position_size_reason: str = ""
+    stop_loss_plan: str = ""
+    take_profit_plan: str = ""
+    expected_return: float | None = None
+    expected_risk: float | None = None
+    risk_reward_ratio: float | None = None
+    confidence: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)

@@ -73,12 +73,23 @@ class EvidenceRecord:
     archived: bool = False
     evidence_hash: str = ""
     conflict_with: list[str] = field(default_factory=list)
+    score_reason: str = ""
+    source_reliability_basis: str = ""
+    verified_body: bool = False
+    body_fetched: bool = False
+    headline_only: bool = False
+    used_in_decisions: list[str] = field(default_factory=list)
+    outcome_score: float | None = None
+    available_at: str | None = None
 
     def __post_init__(self) -> None:
         self.related_symbols = [str(item).upper() for item in _list(self.related_symbols)]
         self.related_topics = [str(item) for item in _list(self.related_topics)]
         self.extracted_facts = [str(item) for item in _list(self.extracted_facts)]
         self.conflict_with = [str(item) for item in _list(self.conflict_with)]
+        self.used_in_decisions = [str(item) for item in _list(self.used_in_decisions)]
+        if self.available_at is None:
+            self.available_at = self.published_at or self.collected_at
         if not self.evidence_hash:
             self.evidence_hash = stable_hash(
                 self.source_type,
@@ -94,7 +105,7 @@ class EvidenceRecord:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "EvidenceRecord":
         data = dict(payload)
-        for key in ["related_symbols", "related_topics", "extracted_facts", "conflict_with"]:
+        for key in ["related_symbols", "related_topics", "extracted_facts", "conflict_with", "used_in_decisions"]:
             data[key] = _list(data.get(key))
         data["archived"] = bool(data.get("archived"))
         return cls(**data)
@@ -146,6 +157,20 @@ class DecisionContext:
     limit_price: float | None = None
     stop_price: float | None = None
     reason: str = ""
+    bullish_reasons: list[str] = field(default_factory=list)
+    bearish_reasons: list[str] = field(default_factory=list)
+    counterarguments: list[str] = field(default_factory=list)
+    invalidation_conditions: list[str] = field(default_factory=list)
+    alternative_scenarios: list[str] = field(default_factory=list)
+    what_would_change_our_mind: list[str] = field(default_factory=list)
+    recommended_holding_period: str = ""
+    stop_loss_plan: str = ""
+    take_profit_plan: str = ""
+    position_size_reason: str = ""
+    expected_return: float | None = None
+    expected_risk: float | None = None
+    risk_reward_ratio: float | None = None
+    data_as_of: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -153,7 +178,17 @@ class DecisionContext:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "DecisionContext":
         data = dict(payload)
-        for key in ["related_evidence_ids", "related_findings", "missing_information"]:
+        for key in [
+            "related_evidence_ids",
+            "related_findings",
+            "missing_information",
+            "bullish_reasons",
+            "bearish_reasons",
+            "counterarguments",
+            "invalidation_conditions",
+            "alternative_scenarios",
+            "what_would_change_our_mind",
+        ]:
             data[key] = _list(data.get(key))
         data["target_symbol"] = str(data.get("target_symbol", "")).upper()
         return cls(**data)
@@ -196,6 +231,7 @@ class AgentRunContext:
     portfolio: dict[str, Any]
     news_items: list[dict[str, Any]]
     watchlist: list[dict[str, Any]]
+    symbol_processing: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
