@@ -37,13 +37,20 @@ from independent_investment_agents.repositories.virtual_order_repository import 
 from independent_investment_agents.simulation.virtual_execution import VirtualSimulationEngine
 from independent_investment_agents.performance import (
     AgentContributionScorer,
+    DecisionContributionCalculator,
     DecisionOutcomeTracker,
     EvidenceContributionScorer,
+    ExecutionPnLCalculator,
     PerformanceRepository,
+    VirtualOrderPerformanceLinker,
     VirtualTradePerformanceTracker,
 )
 from independent_investment_agents.research.simulation_modes import PaperLiveMode
-from independent_investment_agents.research.symbol_queue import build_symbol_processing_plan
+from independent_investment_agents.research.symbol_queue import (
+    SymbolProcessingStore,
+    SymbolQueueRepository,
+    build_symbol_processing_plan,
+)
 from independent_investment_agents.research.universe import MomentumDiscoveryAgent, UniverseManager, VolumeSpikeDiscoveryAgent
 
 try:
@@ -69,6 +76,7 @@ PERFORMANCE_DIR = ARTIFACTS_DIR / "performance"
 PORTFOLIO_DIR = ARTIFACTS_DIR / "portfolio"
 WATCHLIST_FILE = PORTFOLIO_DIR / "watchlist.json"
 POSITIONS_FILE = PORTFOLIO_DIR / "positions.json"
+SYMBOL_QUEUE_FILE = PORTFOLIO_DIR / "symbol_queue.json"
 
 RANGE_CONFIG: dict[str, dict[str, str]] = {
     "all": {"label": "すべて", "period": "max", "interval": "1mo"},
@@ -326,6 +334,7 @@ class DashboardService:
         self.performance_tracker = VirtualTradePerformanceTracker()
         self.decision_outcome_tracker = DecisionOutcomeTracker()
         self.universe_manager = UniverseManager()
+        self.symbol_queue_store = SymbolProcessingStore(SymbolQueueRepository(SYMBOL_QUEUE_FILE))
 
     def _load_session(self) -> dict[str, Any]:
         if SESSION_FILE.exists():
@@ -1088,7 +1097,9 @@ class DashboardService:
             watchlist=[{"symbol": symbol, "changePct": 0.0} for symbol in universe],
             positions=[position.__dict__ for position in portfolio_positions],
             batch_size=self.research_organization.config.max_symbols_per_cycle,
+            stored_items=self.symbol_queue_store.repository.read_items(),
         )
+        self.symbol_queue_store.update_from_plan(initial_symbol_plan)
         display_histories = self._fetch_history_batch(universe, "1mo")
         analysis_histories = self._fetch_history_batch(initial_symbol_plan.processing_symbols, "all", analysis=True)
         meta_lookup = {symbol: self._fetch_meta(symbol) for symbol in universe}
@@ -1203,6 +1214,12 @@ class DashboardService:
             )
         )
         symbol_processing = research_snapshot.get("symbolProcessing") or initial_symbol_plan.to_dict()
+        persisted_symbol_queue = self.symbol_queue_store.update_from_plan(initial_symbol_plan)
+        symbol_processing["queue"] = persisted_symbol_queue
+        symbol_processing["processingCount"] = len(symbol_processing.get("processing_symbols") or symbol_processing.get("processingSymbols") or initial_symbol_plan.processing_symbols)
+        symbol_processing["pendingCount"] = len([item for item in persisted_symbol_queue if str(item.get("status")) in {"queued", "stale", "skipped"}])
+        symbol_processing["completedCount"] = len([item for item in persisted_symbol_queue if str(item.get("status")) == "completed"])
+        symbol_processing["failedCount"] = len([item for item in persisted_symbol_queue if str(item.get("status")) == "failed"])
         latest_decision_context = research_snapshot.get("latestDecisionContext") or {}
         shared_trading_context = build_shared_trading_context(
             focus=focus,
@@ -1262,8 +1279,20 @@ class DashboardService:
             benchmark_history=benchmark_history,
         )
         self.performance_repository.save_outcomes(outcomes)
+        self.research_repository.apply_evidence_outcome_feedback([outcome.to_dict() for outcome in outcomes])
         decision_outcomes = self.performance_repository.read_outcomes(limit=100)
         equity_points = self.performance_repository.read_equity_points(limit=500)
+        performance_links = VirtualOrderPerformanceLinker().link(
+            orders=self.virtual_order_repository.read_orders(limit=500),
+            executions=self.virtual_order_repository.read_executions(limit=500),
+            decisions=list(research_snapshot.get("decisionContexts") or []),
+            outcomes=decision_outcomes,
+        )
+        execution_pnl = ExecutionPnLCalculator().calculate(
+            executions=self.virtual_order_repository.read_executions(limit=500),
+            current_prices={symbol: float((quote_lookup.get(symbol) or {}).get("current") or 0.0) for symbol in universe},
+        )
+        decision_contribution = DecisionContributionCalculator().calculate(decision_outcomes, performance_links)
         performance = {
             **self.performance_tracker.summarize(
                 equity_points,
@@ -1280,6 +1309,12 @@ class DashboardService:
                 }
                 for item in equity_points
             ],
+            "realizedPnl": round(REALIZED_PNL + float(execution_pnl.get("realizedPnlFromExecutions") or 0.0), 2),
+            "unrealizedPnl": round(open_pnl + float(execution_pnl.get("unrealizedPnlFromExecutions") or 0.0), 2),
+            "orderPnl": execution_pnl.get("orderPnl", []),
+            "decisionPnl": decision_contribution,
+            "pendingDecisionCount": len([item for item in decision_outcomes if str(item.get("final_outcome") or "").startswith("pending")]),
+            "virtualOrderLinks": performance_links,
         }
         evidence_records = list(research_snapshot.get("evidenceRecords") or [])
         agent_findings = list(research_snapshot.get("agentFindings") or [])

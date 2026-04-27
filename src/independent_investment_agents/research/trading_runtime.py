@@ -104,6 +104,8 @@ class AgentTask:
     started_at: str | None = None
     completed_at: str | None = None
     next_task: str | None = None
+    message_ja: str = ""
+    message_en: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -116,6 +118,8 @@ class AgentEvent:
     event_type: str
     message: str
     created_at: str
+    message_ja: str = ""
+    message_en: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -140,6 +144,11 @@ class AgentRuntimeState:
     completed_task_count: int = 0
     active_task_count: int = 0
     agent_reality_type: str = "simulated_status"
+    agent_reality_label_ja: str = ""
+    fetched_real_data: bool = False
+    created_evidence: bool = False
+    created_decision_context: bool = False
+    virtual_asset_contribution: float = 0.0
     last_real_task_at: str | None = None
     last_real_evidence_id: str | None = None
     last_real_decision_id: str | None = None
@@ -250,6 +259,11 @@ class AgentRuntimeStore:
                 "runtime_states",
                 {
                     "agent_reality_type": "TEXT NOT NULL DEFAULT 'simulated_status'",
+                    "agent_reality_label_ja": "TEXT NOT NULL DEFAULT ''",
+                    "fetched_real_data": "INTEGER NOT NULL DEFAULT 0",
+                    "created_evidence": "INTEGER NOT NULL DEFAULT 0",
+                    "created_decision_context": "INTEGER NOT NULL DEFAULT 0",
+                    "virtual_asset_contribution": "REAL NOT NULL DEFAULT 0.0",
                     "last_real_task_at": "TEXT",
                     "last_real_evidence_id": "TEXT",
                     "last_real_decision_id": "TEXT",
@@ -274,6 +288,14 @@ class AgentRuntimeStore:
                 )
                 """
             )
+            self._ensure_columns(
+                conn,
+                "runtime_tasks",
+                {
+                    "message_ja": "TEXT NOT NULL DEFAULT ''",
+                    "message_en": "TEXT NOT NULL DEFAULT ''",
+                },
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runtime_events (
@@ -285,6 +307,14 @@ class AgentRuntimeStore:
                 )
                 """
             )
+            self._ensure_columns(
+                conn,
+                "runtime_events",
+                {
+                    "message_ja": "TEXT NOT NULL DEFAULT ''",
+                    "message_en": "TEXT NOT NULL DEFAULT ''",
+                },
+            )
 
     def save_state(self, state: AgentRuntimeState) -> None:
         self.ensure_schema()
@@ -295,11 +325,13 @@ class AgentRuntimeStore:
                     agent_id, company, label_ja, label_en, role, status, latest_task,
                     heartbeat_at, last_run_at, next_run_at, duration_ms, queue_depth,
                     logs, principles, completed_task_count, active_task_count,
-                    agent_reality_type, last_real_task_at, last_real_evidence_id,
-                    last_real_decision_id, actual_processing_enabled, reality_note
+                    agent_reality_type, agent_reality_label_ja, fetched_real_data,
+                    created_evidence, created_decision_context, virtual_asset_contribution,
+                    last_real_task_at, last_real_evidence_id, last_real_decision_id,
+                    actual_processing_enabled, reality_note
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -320,6 +352,11 @@ class AgentRuntimeStore:
                     state.completed_task_count,
                     state.active_task_count,
                     state.agent_reality_type,
+                    state.agent_reality_label_ja,
+                    1 if state.fetched_real_data else 0,
+                    1 if state.created_evidence else 0,
+                    1 if state.created_decision_context else 0,
+                    state.virtual_asset_contribution,
                     state.last_real_task_at,
                     state.last_real_evidence_id,
                     state.last_real_decision_id,
@@ -332,7 +369,12 @@ class AgentRuntimeStore:
         self.ensure_schema()
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO runtime_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT OR REPLACE INTO runtime_tasks (
+                    task_id, agent_id, company, task, status, reason, priority,
+                    created_at, started_at, completed_at, next_task, message_ja, message_en
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     task.task_id,
                     task.agent_id,
@@ -345,6 +387,8 @@ class AgentRuntimeStore:
                     task.started_at,
                     task.completed_at,
                     task.next_task,
+                    task.message_ja,
+                    task.message_en or task.reason,
                 ),
             )
 
@@ -352,8 +396,12 @@ class AgentRuntimeStore:
         self.ensure_schema()
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO runtime_events VALUES (?, ?, ?, ?, ?)",
-                (event.event_id, event.agent_id, event.event_type, event.message, event.created_at),
+                """
+                INSERT OR REPLACE INTO runtime_events (
+                    event_id, agent_id, event_type, message, created_at, message_ja, message_en
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (event.event_id, event.agent_id, event.event_type, event.message, event.created_at, event.message_ja, event.message_en or event.message),
             )
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(_json(event.to_dict()) + "\n")
@@ -414,6 +462,11 @@ class AgentRuntimeStore:
             completed_task_count=int(row["completed_task_count"]),
             active_task_count=int(row["active_task_count"]),
             agent_reality_type=row["agent_reality_type"],
+            agent_reality_label_ja=row["agent_reality_label_ja"],
+            fetched_real_data=bool(row["fetched_real_data"]),
+            created_evidence=bool(row["created_evidence"]),
+            created_decision_context=bool(row["created_decision_context"]),
+            virtual_asset_contribution=float(row["virtual_asset_contribution"]),
             last_real_task_at=row["last_real_task_at"],
             last_real_evidence_id=row["last_real_evidence_id"],
             last_real_decision_id=row["last_real_decision_id"],
@@ -434,6 +487,8 @@ class AgentRuntimeStore:
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             next_task=row["next_task"],
+            message_ja=row["message_ja"],
+            message_en=row["message_en"],
         )
 
 
@@ -460,6 +515,18 @@ def _price_ready(context: SharedTradingContext, symbol: str) -> bool:
         if datetime.now(UTC) - parsed.astimezone(UTC) > timedelta(days=3):
             return False
     return True
+
+
+def _message_ja_for_status(task_status: str, agent_status: str) -> str:
+    if task_status == "running":
+        return "実処理を実行しています。"
+    if agent_status == "blocked":
+        return "必要なデータまたは根拠が不足しているため停止中です。"
+    if agent_status.startswith("waiting"):
+        return "次の市場データまたは処理順を待機しています。"
+    if task_status == "completed":
+        return "処理を完了し、次の判断材料へ反映しました。"
+    return "エージェント状態を更新しました。"
 
 
 def _score_trade_candidate(context: SharedTradingContext, bias: str) -> dict[str, Any]:
@@ -702,6 +769,7 @@ class AgentRuntimeEngine:
                 started_at=utc_now_iso(),
                 completed_at=completed_at,
                 next_task=_next_task_for(definition["id"], context),
+                message_ja=_message_ja_for_status(task_status, status),
             )
             self.store.save_task(task)
             self.store.save_event(
@@ -711,6 +779,7 @@ class AgentRuntimeEngine:
                     event_type=task_status,
                     message=task.reason,
                     created_at=utc_now_iso(),
+                    message_ja=task.message_ja,
                 )
             )
             completed_count = self.store.count_completed(definition["id"])
@@ -732,6 +801,10 @@ class AgentRuntimeEngine:
                 completed_task_count=completed_count,
                 active_task_count=1 if task_status == "running" else 0,
                 agent_reality_type=reality["agent_reality_type"],
+                agent_reality_label_ja=reality["agent_reality_label_ja"],
+                fetched_real_data=bool(reality["fetched_real_data"]),
+                created_evidence=bool(reality["created_evidence"]),
+                created_decision_context=bool(reality["created_decision_context"]),
                 last_real_task_at=reality["last_real_task_at"],
                 last_real_evidence_id=reality["last_real_evidence_id"],
                 last_real_decision_id=reality["last_real_decision_id"],

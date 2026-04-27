@@ -8,9 +8,19 @@ class EvidenceContributionScorer:
         evidence_by_id = {str(item.get("id")): item for item in (evidence_records or [])}
         grouped: dict[str, dict[str, Any]] = {}
         for outcome in outcomes:
-            evidence_ids = [str(item) for item in outcome.get("used_evidence_ids", []) if item]
+            raw_ids = [str(item) for item in outcome.get("used_evidence_ids", []) if item]
+            evidence_ids = [
+                evidence_id
+                for evidence_id in raw_ids
+                if not evidence_by_id.get(evidence_id, {}).get("duplicate_of")
+            ]
             contribution = float(outcome.get("contribution_to_equity") or 0.0)
             success = str(outcome.get("final_outcome") or "") in {"effective_vs_benchmark", "short_term_success"}
+            weights = {
+                evidence_id: 0.55 if evidence_by_id.get(evidence_id, {}).get("headline_only") else 1.0
+                for evidence_id in evidence_ids
+            }
+            total_weight = sum(weights.values()) or 1.0
             for evidence_id in evidence_ids:
                 evidence = evidence_by_id.get(evidence_id, {})
                 source_type = str(evidence.get("source_type") or evidence.get("sourceType") or "unknown")
@@ -20,7 +30,7 @@ class EvidenceContributionScorer:
                 )
                 row["evidenceCount"] += 1
                 row["wins"] += 1 if success else 0
-                row["contributionToEquity"] += contribution / max(len(evidence_ids), 1)
+                row["contributionToEquity"] += contribution * (weights[evidence_id] / total_weight)
         for row in grouped.values():
             row["hitRate"] = round(row["wins"] / row["evidenceCount"], 4) if row["evidenceCount"] else 0.0
             row["contributionToEquity"] = round(row["contributionToEquity"], 2)

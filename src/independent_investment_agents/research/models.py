@@ -39,14 +39,31 @@ class ResearchTask:
     id: str = field(default_factory=lambda: f"rtask-{uuid4().hex}")
     created_at: str = field(default_factory=utc_now_iso)
     completed_at: str | None = None
+    message_ja: str = ""
+    message_en: str = ""
+    merged_from_task_ids: list[str] = field(default_factory=list)
+    merge_reason: str = ""
+    merge_reason_ja: str = ""
+    duplicate_count: int = 0
+    last_merged_at: str | None = None
+    priority_before: int | None = None
+    priority_after: int | None = None
+    blocked_reason: str = ""
+    blocked_reason_ja: str = ""
+    retry_count: int = 0
+    last_retry_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload["message_en"]:
+            payload["message_en"] = payload["reason"]
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ResearchTask":
         data = dict(payload)
         data["target_symbols"] = _list(data.get("target_symbols"))
+        data["merged_from_task_ids"] = _list(data.get("merged_from_task_ids"))
         return cls(**data)
 
 
@@ -78,6 +95,11 @@ class EvidenceRecord:
     verified_body: bool = False
     body_fetched: bool = False
     headline_only: bool = False
+    body_fetch_error: str = ""
+    headline_body_warning: str = ""
+    materiality_label: str = ""
+    horizon_label: str = ""
+    impact_reason_ja: str = ""
     used_in_decisions: list[str] = field(default_factory=list)
     outcome_score: float | None = None
     available_at: str | None = None

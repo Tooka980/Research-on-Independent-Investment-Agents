@@ -34,9 +34,14 @@ class ResearchTask:
     created_by_agent: str = "Virtual Order Agent"
     status: str = "open"
     created_at: str = field(default_factory=utc_now_iso)
+    message_ja: str = ""
+    message_en: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload["message_en"]:
+            payload["message_en"] = payload["reason"]
+        return payload
 
 
 @dataclass
@@ -46,6 +51,8 @@ class RiskCheckResult:
     failed_rules: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     explanation: str = ""
+    message_ja: str = ""
+    message_en: str = ""
     max_order_value_check: bool = True
     cash_check: bool = True
     evidence_check: bool = True
@@ -56,7 +63,10 @@ class RiskCheckResult:
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload["message_en"]:
+            payload["message_en"] = payload["explanation"]
+        return payload
 
 
 @dataclass
@@ -87,10 +97,15 @@ class VirtualOrder:
     expected_risk: float | None = None
     risk_reward_ratio: float | None = None
     confidence: float | None = None
+    risk_notes_ja: list[str] = field(default_factory=list)
+    message_ja: str = ""
+    message_en: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["status"] = self.status.value
+        if not payload["message_en"]:
+            payload["message_en"] = payload["reason"]
         return payload
 
     @classmethod

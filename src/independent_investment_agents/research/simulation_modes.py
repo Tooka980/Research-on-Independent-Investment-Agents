@@ -11,7 +11,9 @@ class SimulationMode:
     data_as_of: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload.update(_mode_metadata(self.name))
+        return payload
 
 
 class BacktestMode(SimulationMode):
@@ -55,6 +57,32 @@ class LookAheadBiasChecker:
 
 class DataAvailabilityChecker(TimestampGuard):
     pass
+
+
+def _mode_metadata(name: str) -> dict[str, Any]:
+    metadata = {
+        "PaperLiveMode": {
+            "label_ja": "仮想ライブ運用モード",
+            "description_ja": "現在取得可能なデータで仮想運用します。",
+            "allowed_processes": ["現在データ取得", "仮想注文候補", "仮想約定"],
+        },
+        "BacktestMode": {
+            "label_ja": "バックテストモード",
+            "description_ja": "過去時点で利用可能だったデータだけを使います。",
+            "allowed_processes": ["指定日時以前のデータ取得", "過去判断評価"],
+        },
+        "ReplayMode": {
+            "label_ja": "リプレイ検証モード",
+            "description_ja": "過去の市場を時系列で再生します。",
+            "allowed_processes": ["時系列再生", "逐次評価"],
+        },
+        "ManualResearchMode": {
+            "label_ja": "手動調査モード",
+            "description_ja": "売買候補を作らず調査結果のみ表示します。",
+            "allowed_processes": ["調査表示", "Evidence確認"],
+        },
+    }
+    return metadata.get(name, {"label_ja": name, "description_ja": "", "allowed_processes": []})
 
 
 def _parse_dt(value: str | None) -> datetime | None:

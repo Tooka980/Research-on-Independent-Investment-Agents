@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -18,31 +18,68 @@ class MultiFactorScore:
     portfolio_fit_score: float
     confidence_score: float
     total_score: float
+    missing_information: list[str] = field(default_factory=list)
+    score_reason_ja: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 class MultiFactorScoringEngine:
-    def score(self, *, symbol_payload: dict[str, Any], portfolio_state: dict[str, Any], evidence_refs: list[str]) -> MultiFactorScore:
+    def score(self, *, symbol_payload: dict[str, Any], portfolio_state: dict[str, Any], evidence_refs: list[Any]) -> MultiFactorScore:
         quote = symbol_payload.get("quote", {})
-        change_pct = _safe_float(quote.get("changePct"))
-        volume = _safe_float(quote.get("volume"))
-        beta = _safe_float(quote.get("beta"), default=1.0)
-        trailing_pe = _safe_float(quote.get("trailingPE"))
+        metrics = symbol_payload.get("metrics", {}) or {}
+        missing: list[str] = []
+        reasons: list[str] = []
+        change_pct = _metric(quote, metrics, "changePct", "change_pct", default=0.0, missing=missing)
+        volume = _metric(quote, metrics, "volume", default=None, missing=missing)
+        average_volume = _metric(quote, metrics, "averageVolume", "average_volume", default=None, missing=missing)
+        beta = _metric(quote, metrics, "beta", default=None, missing=missing)
+        trailing_pe = _metric(quote, metrics, "trailingPE", "trailing_pe", "PER", default=None, missing=missing)
+        trailing_eps = _metric(quote, metrics, "trailingEps", "trailingEPS", "EPS", default=None, missing=missing)
+        market_cap = _metric(quote, metrics, "marketCap", "market_cap", default=None, missing=missing)
         cash = _safe_float(portfolio_state.get("cash"))
         equity = max(_safe_float(portfolio_state.get("equity"), default=cash or 1.0), 1.0)
         cash_ratio = cash / equity
         market_score = 0.55
         momentum_score = _clamp(0.5 + change_pct / 12.0)
-        volume_score = 0.6 if volume > 0 else 0.35
-        news_score = _clamp(0.35 + 0.08 * len(evidence_refs))
-        fundamental_score = 0.58 if symbol_payload.get("businessSummary") or symbol_payload.get("longName") else 0.45
-        valuation_score = 0.55 if trailing_pe <= 0 else _clamp(0.75 - min(trailing_pe, 80) / 160)
-        risk_score = _clamp(0.25 + abs(change_pct) / 15.0 + max(0.0, beta - 1.0) / 2.0)
-        liquidity_score = 0.65 if volume > 0 else 0.35
+        if volume is None or volume <= 0 or average_volume is None or average_volume <= 0:
+            volume_score = 0.28
+            liquidity_score = 0.3
+            reasons.append("出来高データが不足しているため、流動性スコアを低く評価しました。")
+        else:
+            volume_ratio = volume / max(average_volume, 1.0)
+            volume_score = _clamp(0.35 + min(volume_ratio, 3.0) * 0.18)
+            liquidity_score = _clamp(0.35 + min(volume_ratio, 3.0) * 0.14)
+        effective_evidence = _effective_evidence(evidence_refs)
+        body_checked = sum(1 for item in effective_evidence if isinstance(item, dict) and item.get("body_fetched"))
+        headline_only = sum(1 for item in effective_evidence if isinstance(item, dict) and item.get("headline_only"))
+        if effective_evidence and any(isinstance(item, dict) for item in effective_evidence):
+            news_quality = sum(float((item if isinstance(item, dict) else {}).get("credibility_score") or 0.5) * float((item if isinstance(item, dict) else {}).get("impact_score") or 0.35) for item in effective_evidence)
+            news_score = _clamp(0.30 + news_quality / max(len(effective_evidence), 1))
+            if headline_only and not body_checked:
+                news_score = min(news_score, 0.55)
+                reasons.append("本文確認済みニュースがないため、ニューススコアは控えめに評価しました。")
+        else:
+            news_score = _clamp(0.35 + 0.08 * len(effective_evidence))
+        fundamental_score = 0.58 if symbol_payload.get("businessSummary") or symbol_payload.get("longName") or market_cap else 0.42
+        if trailing_pe is None:
+            valuation_score = 0.42
+            reasons.append("PER が取得できないため、バリュエーション評価は保留しました。")
+        elif trailing_pe <= 0:
+            valuation_score = 0.38
+            reasons.append("PER が0以下のため、バリュエーション評価を低めに扱いました。")
+        else:
+            valuation_score = _clamp(0.75 - min(trailing_pe, 80) / 160)
+        beta_for_risk = beta if beta is not None else 1.25
+        if beta is None:
+            reasons.append("beta が取得できないため、リスクスコアを保守的に評価しました。")
+        if trailing_eps is None:
+            reasons.append("EPS が取得できないため、収益性の確信度を下げました。")
+        risk_score = _clamp(0.25 + abs(change_pct) / 15.0 + max(0.0, beta_for_risk - 1.0) / 2.0)
         portfolio_fit_score = _clamp(0.45 + cash_ratio)
-        confidence_score = _clamp(0.3 + 0.12 * min(len(evidence_refs), 4))
+        missing_penalty = min(0.28, 0.04 * len(set(missing)))
+        confidence_score = _clamp(0.3 + 0.12 * min(len(effective_evidence), 4) - missing_penalty)
         total = (
             market_score * 0.10
             + momentum_score * 0.15
@@ -66,6 +103,8 @@ class MultiFactorScoringEngine:
             portfolio_fit_score=round(portfolio_fit_score, 4),
             confidence_score=round(confidence_score, 4),
             total_score=round(total, 4),
+            missing_information=sorted(set(missing)),
+            score_reason_ja=reasons,
         )
 
 
@@ -131,6 +170,36 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     if math.isnan(number) or math.isinf(number):
         return default
     return number
+
+
+def _metric(quote: dict[str, Any], metrics: dict[str, Any], *keys: str, default: float | None, missing: list[str]) -> float | None:
+    for key in keys:
+        if key in quote and quote.get(key) not in {None, ""}:
+            return _safe_float(quote.get(key), default=default or 0.0)
+        if key in metrics and metrics.get(key) not in {None, ""}:
+            return _safe_float(metrics.get(key), default=default or 0.0)
+    missing.append(keys[0])
+    return default
+
+
+def _effective_evidence(evidence_refs: list[Any]) -> list[Any]:
+    output: list[Any] = []
+    seen: set[str] = set()
+    for item in evidence_refs:
+        if isinstance(item, dict):
+            if item.get("duplicate_of"):
+                continue
+            evidence_id = str(item.get("id") or item.get("url_or_path") or len(output))
+            if evidence_id in seen:
+                continue
+            seen.add(evidence_id)
+            output.append(item)
+        else:
+            text = str(item)
+            if text and text not in seen:
+                seen.add(text)
+                output.append(text)
+    return output
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:

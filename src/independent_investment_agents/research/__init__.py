@@ -14,10 +14,25 @@ from independent_investment_agents.research.models import (
     ResearchTask,
 )
 from independent_investment_agents.research.repository import ResearchRepository
-from independent_investment_agents.research.evidence_quality import EvidenceQualityPolicy, SourceReliabilityTable
+from independent_investment_agents.research.evidence_quality import (
+    ArticleBodyFetcher,
+    ArticleSummarizer,
+    EvidenceQualityPolicy,
+    HeadlineBodyMismatchChecker,
+    MaterialityClassifier,
+    NewsImpactScorer,
+    ShortTermLongTermClassifier,
+    SourceReliabilityTable,
+)
 from independent_investment_agents.research.scoring import MultiFactorScoringEngine, PositionSizingEngine, StopLossTakeProfitEngine
 from independent_investment_agents.research.simulation_modes import BacktestMode, PaperLiveMode, ReplayMode, ManualResearchMode
-from independent_investment_agents.research.symbol_queue import SymbolProcessingPlan, build_symbol_processing_plan
+from independent_investment_agents.research.symbol_queue import (
+    SymbolProcessingPlan,
+    SymbolProcessingStore,
+    SymbolQueueRepository,
+    SymbolRotationPolicy,
+    build_symbol_processing_plan,
+)
 from independent_investment_agents.research.strategy_output import StrategyOutputEngine
 from independent_investment_agents.research.trading_runtime import (
     AgentEvent,
@@ -33,6 +48,8 @@ from independent_investment_agents.research.trading_runtime import (
 
 __all__ = [
     "AgentFinding",
+    "ArticleBodyFetcher",
+    "ArticleSummarizer",
     "AgentEvent",
     "AgentRuntimeEngine",
     "AgentRuntime",
@@ -63,6 +80,9 @@ __all__ = [
     "StrategyOutputEngine",
     "StopLossTakeProfitEngine",
     "SymbolProcessingPlan",
+    "SymbolProcessingStore",
+    "SymbolQueueRepository",
+    "SymbolRotationPolicy",
     "TemplateLanguageProvider",
     "TaskEnvelope",
     "TaskQueue",
@@ -72,3 +92,7 @@ __all__ = [
     "build_symbol_processing_plan",
     "build_shared_trading_context",
 ]
+    "HeadlineBodyMismatchChecker",
+    "MaterialityClassifier",
+    "NewsImpactScorer",
+    "ShortTermLongTermClassifier",

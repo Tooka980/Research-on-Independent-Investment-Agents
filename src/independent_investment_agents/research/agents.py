@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from dataclasses import replace
 from typing import Any
+from uuid import uuid4
 
 from independent_investment_agents.agents.base_agent import BaseAgent
 from independent_investment_agents.core.agent_runtime import AgentRuntime, AgentRuntimeConfig, load_agent_runtime_config
@@ -408,7 +409,7 @@ class StrategySynthesisAgent(ResearchAgent):
         side = "buy"
         decision_type = "buy_candidate" if score.total_score >= 0.52 else "small_buy_candidate"
         order_type = "rebalance"
-        if score.total_score < 0.42:
+        if score.total_score < 0.42 or risk_reward < 1.0:
             decision_type = "research_more"
             side = "hold"
             order_type = "market"
@@ -424,8 +425,11 @@ class StrategySynthesisAgent(ResearchAgent):
         ]
         invalidation_conditions = InvalidationConditionBuilder().build(symbol=symbol, stop_loss_plan=stop_loss_plan)
         confidence = min(0.88, max(0.25, score.confidence_score))
+        created_at = utc_now_iso()
+        decision_id_time = created_at.replace("-", "").replace(":", "").replace("+00:00", "Z")
+        decision_id_time = "".join(char for char in decision_id_time if char.isalnum() or char in {"T", "Z"})[:18]
         decision = DecisionContext(
-            id=f"dc-research-{symbol.lower().replace('.', '-')}",
+            id=f"dc-research-{symbol.lower().replace('.', '-')}-t-{decision_id_time}-{uuid4().hex[:8]}",
             target_symbol=symbol,
             decision_type=decision_type,
             related_evidence_ids=evidence_ids,
@@ -436,7 +440,8 @@ class StrategySynthesisAgent(ResearchAgent):
             risk_summary=f"cash_ratio={cash_ratio:.2f}; simulation only; no real order.",
             final_recommendation_for_simulation="Create evidence-backed virtual order candidate only inside simulator.",
             confidence=confidence,
-            missing_information=[] if confidence >= 0.5 else ["fresh evidence"],
+            missing_information=[*score.missing_information, *(["fresh evidence"] if confidence < 0.5 else [])],
+            created_at=created_at,
             side=side,
             order_type=order_type,
             target_value=target_value,
@@ -583,7 +588,8 @@ class ResearchOrganization:
         markdown = self.repository.export_markdown()
         current_decisions = [decision for result in results for decision in result.decisions]
         decisions = self.repository.list_decision_contexts(limit=50)
-        latest_decision = current_decisions[-1].to_dict() if current_decisions else None
+        latest_decision_model = current_decisions[-1] if current_decisions else self.repository.latest_decision_context(context.focus_symbol)
+        latest_decision = latest_decision_model.to_dict() if latest_decision_model else None
         runtime_snapshot = self.runtime.snapshot()
         return {
             "organizationDesk": self._organization_desk(results, runtime_snapshot),
@@ -643,6 +649,12 @@ class ResearchOrganization:
             division = by_name[result.agent_name].division
             label_ja, label_en = agent_labels.get(result.agent_name, (result.agent_name, result.agent_name))
             runtime_state = runtime_by_agent_id.get(by_name[result.agent_name].agent_id, {})
+            reality_type = "data_fetching_worker" if result.evidence else ("analysis_worker" if result.decisions or result.findings else "idle_worker")
+            reality_label_ja = {
+                "data_fetching_worker": "実データ取得あり",
+                "analysis_worker": "分析処理あり",
+                "idle_worker": "待機中",
+            }.get(reality_type, "待機中")
             divisions.setdefault(division, []).append(
                 {
                     "agentId": by_name[result.agent_name].agent_id,
@@ -655,7 +667,11 @@ class ResearchOrganization:
                     "lastError": runtime_state.get("last_error"),
                     "restartCount": runtime_state.get("restart_count", 0),
                     "queuedTaskCount": runtime_state.get("queued_task_count", 0),
-                    "agent_reality_type": "real_worker",
+                    "agent_reality_type": reality_type,
+                    "agent_reality_label_ja": reality_label_ja,
+                    "fetched_real_data": bool(result.evidence),
+                    "created_evidence": bool(result.evidence),
+                    "created_decision_context": bool(result.decisions),
                     "last_real_task_at": runtime_state.get("last_heartbeat"),
                     "last_real_evidence_id": (result.evidence[-1].id if result.evidence else None),
                     "last_real_decision_id": (result.decisions[-1].id if result.decisions else None),
@@ -680,7 +696,11 @@ class ResearchOrganization:
                 "lastError": director_state.get("last_error"),
                 "restartCount": director_state.get("restart_count", 0),
                 "queuedTaskCount": director_state.get("queued_task_count", 0),
-                "agent_reality_type": "real_worker",
+                    "agent_reality_type": "analysis_worker",
+                    "agent_reality_label_ja": "分析処理あり",
+                    "fetched_real_data": False,
+                    "created_evidence": False,
+                    "created_decision_context": False,
                 "last_real_task_at": director_state.get("last_heartbeat"),
                 "last_real_evidence_id": None,
                 "last_real_decision_id": None,

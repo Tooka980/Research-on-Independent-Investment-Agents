@@ -81,6 +81,116 @@ function formatSignedYen(value) {
   return `${n >= 0 ? "+" : "-"}${yen.format(Math.abs(n))}`;
 }
 
+function translateStatus(value) {
+  const labels = {
+    simulated_status: "表示用ステータス",
+    real_worker: "実処理エージェント",
+    data_fetching_worker: "実データ取得あり",
+    analysis_worker: "分析処理あり",
+    template_worker: "テンプレート応答のみ",
+    display_only: "表示専用",
+    planned: "実装予定",
+    failed_worker: "失敗中",
+    idle_worker: "待機中",
+    runtime_idle: "待機中",
+    data_unavailable: "データ未取得",
+    unknown: "不明",
+    pending: "保留中",
+    blocked: "停止中",
+    waiting: "待機中",
+    queued: "処理待ち",
+    selected: "今回選択",
+    fetching: "データ取得中",
+    analyzing: "分析中",
+    completed: "分析完了",
+    failed: "失敗",
+    stale: "古い",
+    skipped: "今回見送り",
+    approved_for_virtual_order: "仮想注文候補として承認",
+    approved_for_simulation: "仮想注文候補として承認",
+    rejected_by_risk: "リスク制約により却下",
+    no_virtual_order: "仮想注文なし",
+    non_actionable_decision: "仮想注文対象外",
+  };
+  return labels[String(value || "").trim()] || String(value || "不明");
+}
+
+function translateMode(value) {
+  const labels = {
+    PaperLiveMode: "仮想ライブ運用モード",
+    BacktestMode: "バックテストモード",
+    ReplayMode: "リプレイ検証モード",
+    ManualResearchMode: "手動調査モード",
+    simulated_virtual_only: "仮想注文専用",
+  };
+  return labels[String(value || "").trim()] || String(value || "不明");
+}
+
+function translateRealityType(value) {
+  return translateStatus(value);
+}
+
+function translateMetricLabel(value) {
+  const labels = {
+    PERFORMANCE: "運用成績",
+    "VIRTUAL ASSET MAXIMIZATION": "仮想資産最大化",
+    "PORTFOLIO EQUITY": "仮想総資産",
+    "TOTAL RETURN": "累積リターン",
+    "MAX DRAWDOWN": "最大ドローダウン",
+    "BENCH EXCESS": "ベンチマーク超過",
+    "DECISION OUTCOMES": "判断結果",
+    "AGENT CONTRIBUTION": "エージェント別貢献度",
+    "EVIDENCE CONTRIBUTION": "根拠別貢献度",
+    "SYMBOL QUEUE": "銘柄処理キュー",
+    "WATCHLIST & POSITIONS": "監視銘柄と保有銘柄",
+  };
+  return labels[String(value || "").trim()] || String(value || "");
+}
+
+function translateDecisionOutcome(value) {
+  const labels = {
+    pending_price_data: "価格データ待ち",
+    pending_horizon: "評価期間未経過",
+    effective_vs_benchmark: "ベンチマーク超過",
+    short_term_success: "短期成功",
+    short_term_failed: "短期失敗",
+    risk_reduction_success: "リスク削減成功",
+    invalid_due_to_timestamp: "時刻不整合",
+    pending: "評価期間未経過",
+  };
+  return labels[String(value || "").trim()] || translateStatus(value);
+}
+
+function translateTaskType(value) {
+  const labels = {
+    non_actionable_decision: "仮想注文対象外の判断",
+    missing_trade_plan_for_virtual_order: "売買計画不足",
+    missing_evidence_for_virtual_order: "根拠不足",
+    risk_reward_too_low_for_virtual_order: "リスクリワード不足",
+    invalid_expected_risk_for_virtual_order: "想定リスク不正",
+  };
+  return labels[String(value || "").trim()] || translateStatus(value);
+}
+
+function translateRiskRule(value) {
+  const labels = {
+    missing_evidence_refs: "根拠ID不足",
+    insufficient_virtual_cash: "仮想現金不足",
+    max_virtual_order_value_exceeded: "最大注文額超過",
+    invalid_virtual_price: "価格不正",
+    missing_ohlcv: "OHLCV不足",
+    missing_virtual_trade_plan: "売買計画不足",
+    invalid_expected_risk: "想定リスク不正",
+    risk_reward_ratio_below_minimum: "リスクリワード不足",
+    sell_quantity_exceeds_position: "保有数量超過",
+  };
+  return labels[String(value || "").trim()] || String(value || "");
+}
+
+function displayMessage(row) {
+  return row?.message_ja || row?.messageJa || row?.reason_ja || row?.reasonJa || row?.message || row?.message_en || row?.messageEn || row?.reason || "";
+}
+
 function findWatchItem(data, symbol) {
   return (data.watchlist || []).find((item) => item.symbol === symbol) || {};
 }
@@ -155,6 +265,7 @@ function buildAgentHealthSnapshot(previousAgents, context) {
       dataSuccessRate: remote.dataSuccessRate ?? (status === "blocked" || status === "waiting_for_data" ? 0 : 1),
       newsSuccessRate: remote.newsSuccessRate ?? 1,
       agentRealityType: remote.agent_reality_type || remote.agentRealityType || "simulated_status",
+      agentRealityLabelJa: remote.agent_reality_label_ja || remote.agentRealityLabelJa || translateRealityType(remote.agent_reality_type || remote.agentRealityType || "simulated_status"),
       actualProcessingEnabled: remote.actual_processing_enabled ?? remote.actualProcessingEnabled ?? false,
       realityNote: remote.reality_note || remote.realityNote || "",
       logs,
@@ -1033,21 +1144,21 @@ function PerformanceDashboard({ performance, outcomes, agentContribution, eviden
     <section className="band performance-band">
       <div className="section-head">
         <div>
-          <div className="section-kicker">PERFORMANCE / VIRTUAL ASSET MAXIMIZATION</div>
-          <div className="section-title">検証可能な成果</div>
+          <div className="section-kicker">{translateMetricLabel("PERFORMANCE")} / {translateMetricLabel("VIRTUAL ASSET MAXIMIZATION")}</div>
+          <div className="section-title">運用成績</div>
         </div>
-        <div className="tiny-label">{simulationMode?.name || "PaperLiveMode"} / BENCH {simulationMode?.benchmarkSymbol || "^N225"} / {metrics.benchmarkStatus || "unknown"}</div>
+        <div className="tiny-label">{simulationMode?.label_ja || translateMode(simulationMode?.name || "PaperLiveMode")} / ベンチマーク {simulationMode?.benchmarkSymbol || "^N225"} / {translateStatus(metrics.benchmarkStatus || "unknown")}</div>
       </div>
       <div className="performance-grid">
-        <Metric label="PORTFOLIO EQUITY" title="virtual equity" value={yen.format(metrics.portfolioEquity || 0)} note={`assets ${yen.format(metrics.virtualTotalAssets || 0)}`} />
-        <Metric label="TOTAL RETURN" title="return" value={`${number.format(metrics.totalReturnPct || 0)}%`} note={`annualized ${number.format(metrics.annualizedReturnPct || 0)}%`} signed={metrics.totalReturnPct} />
-        <Metric label="MAX DRAWDOWN" title="risk" value={`${number.format(metrics.maxDrawdownPct || 0)}%`} note={`sharpe ${number.format(metrics.sharpeRatio || 0)}`} signed={-Number(metrics.maxDrawdownPct || 0)} />
-        <Metric label="BENCH EXCESS" title="benchmark" value={metrics.benchmarkExcessReturnPct == null ? "N/A" : `${number.format(metrics.benchmarkExcessReturnPct)}%`} note={`win ${number.format((metrics.winRate || 0) * 100)}% / PF ${number.format(metrics.profitFactor || 0)}`} signed={metrics.benchmarkExcessReturnPct || 0} />
+        <Metric label={translateMetricLabel("PORTFOLIO EQUITY")} title="仮想総資産" value={yen.format(metrics.portfolioEquity || 0)} note={`保有評価額 ${yen.format(metrics.virtualTotalAssets || 0)}`} />
+        <Metric label={translateMetricLabel("TOTAL RETURN")} title="累積リターン" value={`${number.format(metrics.totalReturnPct || 0)}%`} note={`年率 ${number.format(metrics.annualizedReturnPct || 0)}%`} signed={metrics.totalReturnPct} />
+        <Metric label={translateMetricLabel("MAX DRAWDOWN")} title="最大ドローダウン" value={`${number.format(metrics.maxDrawdownPct || 0)}%`} note={`シャープ ${number.format(metrics.sharpeRatio || 0)}`} signed={-Number(metrics.maxDrawdownPct || 0)} />
+        <Metric label={translateMetricLabel("BENCH EXCESS")} title="ベンチマーク超過" value={metrics.benchmarkExcessReturnPct == null ? "未取得" : `${number.format(metrics.benchmarkExcessReturnPct)}%`} note={`勝率 ${number.format((metrics.winRate || 0) * 100)}% / 評価保留 ${metrics.pendingDecisionCount || 0}`} signed={metrics.benchmarkExcessReturnPct || 0} />
       </div>
       <div className="research-ledger">
-        <ResearchLedger title="DECISION OUTCOMES" rows={(outcomes || []).slice(-6)} getMain={(row) => `${row.target_symbol} / ${row.final_outcome}`} getMeta={(row) => formatSignedYen(row.contribution_to_equity || 0)} />
-        <ResearchLedger title="AGENT CONTRIBUTION" rows={(agentContribution || []).slice(0, 6).map((row, idx) => ({ ...row, id: row.agent || idx }))} getMain={(row) => row.agent} getMeta={(row) => `${number.format((row.winRate || 0) * 100)}%`} />
-        <ResearchLedger title="EVIDENCE CONTRIBUTION" rows={(evidenceContribution || []).slice(0, 6).map((row, idx) => ({ ...row, id: row.sourceType || idx }))} getMain={(row) => row.sourceType} getMeta={(row) => formatSignedYen(row.contributionToEquity || 0)} />
+        <ResearchLedger title={translateMetricLabel("DECISION OUTCOMES")} rows={(outcomes || []).slice(-6)} getMain={(row) => `${row.target_symbol} / ${translateDecisionOutcome(row.final_outcome)}`} getMeta={(row) => formatSignedYen(row.contribution_to_equity || 0)} />
+        <ResearchLedger title={translateMetricLabel("AGENT CONTRIBUTION")} rows={(agentContribution || []).slice(0, 6).map((row, idx) => ({ ...row, id: row.agent || idx }))} getMain={(row) => row.agent} getMeta={(row) => `${number.format((row.winRate || 0) * 100)}%`} />
+        <ResearchLedger title={translateMetricLabel("EVIDENCE CONTRIBUTION")} rows={(evidenceContribution || []).slice(0, 6).map((row, idx) => ({ ...row, id: row.sourceType || idx }))} getMain={(row) => row.sourceType} getMeta={(row) => formatSignedYen(row.contributionToEquity || 0)} />
       </div>
     </section>
   );

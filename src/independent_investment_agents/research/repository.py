@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from independent_investment_agents.research.models import (
     AgentFinding,
@@ -13,6 +14,7 @@ from independent_investment_agents.research.models import (
     ResearchTask,
     json_dumps,
     json_loads_list,
+    utc_now_iso,
 )
 from independent_investment_agents.research.task_policies import TaskDeduplicator, TaskTTL
 
@@ -42,6 +44,25 @@ class ResearchRepository:
                     completed_at TEXT
                 )
                 """
+            )
+            self._ensure_columns(
+                conn,
+                "research_tasks",
+                {
+                    "message_ja": "TEXT NOT NULL DEFAULT ''",
+                    "message_en": "TEXT NOT NULL DEFAULT ''",
+                    "merged_from_task_ids": "TEXT NOT NULL DEFAULT '[]'",
+                    "merge_reason": "TEXT NOT NULL DEFAULT ''",
+                    "merge_reason_ja": "TEXT NOT NULL DEFAULT ''",
+                    "duplicate_count": "INTEGER NOT NULL DEFAULT 0",
+                    "last_merged_at": "TEXT",
+                    "priority_before": "INTEGER",
+                    "priority_after": "INTEGER",
+                    "blocked_reason": "TEXT NOT NULL DEFAULT ''",
+                    "blocked_reason_ja": "TEXT NOT NULL DEFAULT ''",
+                    "retry_count": "INTEGER NOT NULL DEFAULT 0",
+                    "last_retry_at": "TEXT",
+                },
             )
             conn.execute(
                 """
@@ -79,11 +100,17 @@ class ResearchRepository:
                     "verified_body": "INTEGER NOT NULL DEFAULT 0",
                     "body_fetched": "INTEGER NOT NULL DEFAULT 0",
                     "headline_only": "INTEGER NOT NULL DEFAULT 0",
+                    "body_fetch_error": "TEXT NOT NULL DEFAULT ''",
+                    "headline_body_warning": "TEXT NOT NULL DEFAULT ''",
+                    "materiality_label": "TEXT NOT NULL DEFAULT ''",
+                    "horizon_label": "TEXT NOT NULL DEFAULT ''",
+                    "impact_reason_ja": "TEXT NOT NULL DEFAULT ''",
                     "used_in_decisions": "TEXT NOT NULL DEFAULT '[]'",
                     "outcome_score": "REAL",
                     "available_at": "TEXT",
                 },
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_symbol_created ON decision_contexts(target_symbol, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_hash ON evidence_records(evidence_hash)")
             conn.execute(
                 """
@@ -177,10 +204,19 @@ class ResearchRepository:
                 if merge.action == "merge" and merge.existing_task_id:
                     match = next((item for item in existing_tasks if item.id == merge.existing_task_id), None)
                     if match is not None:
-                        return match
+                        updated = self._merge_task(conn, existing=match, incoming=task, merge_reason=merge.reason)
+                        return updated
             conn.execute(
                 """
-                INSERT OR REPLACE INTO research_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO research_tasks (
+                    id, task_type, target_symbols, topic, priority, created_by_agent, status,
+                    reason, created_at, completed_at, message_ja, message_en,
+                    merged_from_task_ids, merge_reason, merge_reason_ja, duplicate_count,
+                    last_merged_at, priority_before, priority_after, blocked_reason,
+                    blocked_reason_ja, retry_count, last_retry_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     task.id,
@@ -193,6 +229,19 @@ class ResearchRepository:
                     task.reason,
                     task.created_at,
                     task.completed_at,
+                    task.message_ja,
+                    task.message_en or task.reason,
+                    json_dumps(task.merged_from_task_ids),
+                    task.merge_reason,
+                    task.merge_reason_ja,
+                    task.duplicate_count,
+                    task.last_merged_at,
+                    task.priority_before,
+                    task.priority_after,
+                    task.blocked_reason,
+                    task.blocked_reason_ja,
+                    task.retry_count,
+                    task.last_retry_at,
                 ),
             )
         return task
@@ -211,10 +260,11 @@ class ResearchRepository:
                     sentiment_score, relevance_score, credibility_score, freshness_score, impact_score,
                     duplicate_of, archived, evidence_hash, conflict_with, score_reason,
                     source_reliability_basis, verified_body, body_fetched, headline_only,
-                    used_in_decisions, outcome_score, available_at
+                    body_fetch_error, headline_body_warning, materiality_label,
+                    horizon_label, impact_reason_ja, used_in_decisions, outcome_score, available_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -244,6 +294,11 @@ class ResearchRepository:
                     1 if evidence.verified_body else 0,
                     1 if evidence.body_fetched else 0,
                     1 if evidence.headline_only else 0,
+                    evidence.body_fetch_error,
+                    evidence.headline_body_warning,
+                    evidence.materiality_label,
+                    evidence.horizon_label,
+                    evidence.impact_reason_ja,
                     json_dumps(evidence.used_in_decisions),
                     evidence.outcome_score,
                     evidence.available_at,
@@ -274,9 +329,12 @@ class ResearchRepository:
     def save_decision_context(self, decision: DecisionContext) -> DecisionContext:
         self.ensure_schema()
         with self._connect() as conn:
+            existing = conn.execute("SELECT id FROM decision_contexts WHERE id = ?", (decision.id,)).fetchone()
+            if existing:
+                decision.id = _append_only_decision_id(decision)
             conn.execute(
                 """
-                INSERT OR REPLACE INTO decision_contexts (
+                INSERT INTO decision_contexts (
                     id, target_symbol, decision_type, related_evidence_ids, related_findings,
                     market_state_summary, company_summary, news_summary, risk_summary,
                     final_recommendation_for_simulation, confidence, missing_information, created_at,
@@ -368,7 +426,33 @@ class ResearchRepository:
         return [self._row_to_finding(row) for row in self._fetch("agent_findings", "created_at", limit)]
 
     def list_decision_contexts(self, limit: int = 20) -> list[DecisionContext]:
-        return [self._row_to_decision(row) for row in self._fetch("decision_contexts", "created_at", limit)]
+        self.ensure_schema()
+        with self._connect() as conn:
+            rows = list(conn.execute("SELECT * FROM decision_contexts ORDER BY created_at DESC LIMIT ?", (limit,)))
+        return [self._row_to_decision(row) for row in reversed(rows)]
+
+    def latest_decision_context(self, symbol: str | None = None) -> DecisionContext | None:
+        self.ensure_schema()
+        with self._connect() as conn:
+            if symbol:
+                row = conn.execute(
+                    "SELECT * FROM decision_contexts WHERE target_symbol = ? ORDER BY created_at DESC LIMIT 1",
+                    (symbol.upper(),),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT * FROM decision_contexts ORDER BY created_at DESC LIMIT 1").fetchone()
+        return self._row_to_decision(row) if row else None
+
+    def list_decision_contexts_for_symbol(self, symbol: str, limit: int = 50) -> list[DecisionContext]:
+        self.ensure_schema()
+        with self._connect() as conn:
+            rows = list(
+                conn.execute(
+                    "SELECT * FROM decision_contexts WHERE target_symbol = ? ORDER BY created_at DESC LIMIT ?",
+                    (symbol.upper(), limit),
+                )
+            )
+        return [self._row_to_decision(row) for row in reversed(rows)]
 
     def archive_low_value_evidence(self, threshold: float = 0.25) -> int:
         self.ensure_schema()
@@ -400,6 +484,29 @@ class ResearchRepository:
             "decisionContextTotal": decision_total,
             "markdownPath": str(self.markdown_path),
         }
+
+    def apply_evidence_outcome_feedback(self, outcomes: list[dict[str, Any]]) -> None:
+        self.ensure_schema()
+        if not outcomes:
+            return
+        with self._connect() as conn:
+            for outcome in outcomes:
+                decision_id = str(outcome.get("decision_id") or "")
+                outcome_score = _outcome_score(outcome)
+                for evidence_id in [str(item) for item in outcome.get("used_evidence_ids", []) if item]:
+                    row = conn.execute("SELECT * FROM evidence_records WHERE id = ?", (evidence_id,)).fetchone()
+                    if not row or row["duplicate_of"]:
+                        continue
+                    weight = 0.55 if row["headline_only"] else 1.0
+                    previous = row["outcome_score"]
+                    next_score = outcome_score * weight if previous is None else round((float(previous) + outcome_score * weight) / 2.0, 6)
+                    used = [str(item) for item in json_loads_list(row["used_in_decisions"])]
+                    if decision_id and decision_id not in used:
+                        used.append(decision_id)
+                    conn.execute(
+                        "UPDATE evidence_records SET outcome_score = ?, used_in_decisions = ? WHERE id = ?",
+                        (next_score, json_dumps(used), evidence_id),
+                    )
 
     def export_markdown(self, limit: int = 12) -> str:
         evidence = self.list_evidence(limit=limit)
@@ -447,7 +554,58 @@ class ResearchRepository:
                 task = self._row_to_task(row)
                 status = ttl.status_for(task)
                 if status != task.status:
-                    conn.execute("UPDATE research_tasks SET status = ? WHERE id = ?", (status, task.id))
+                    blocked_reason = "task exceeded freshness window" if status == "blocked" else task.blocked_reason
+                    blocked_reason_ja = "タスクが長時間更新されていないため停止中にしました。" if status == "blocked" else task.blocked_reason_ja
+                    conn.execute(
+                        "UPDATE research_tasks SET status = ?, blocked_reason = ?, blocked_reason_ja = ? WHERE id = ?",
+                        (status, blocked_reason, blocked_reason_ja, task.id),
+                    )
+
+    def _merge_task(self, conn: sqlite3.Connection, *, existing: ResearchTask, incoming: ResearchTask, merge_reason: str) -> ResearchTask:
+        now = utc_now_iso()
+        priority_before = existing.priority
+        priority_after = min(existing.priority, incoming.priority)
+        merged_ids = list(existing.merged_from_task_ids)
+        if incoming.id not in merged_ids:
+            merged_ids.append(incoming.id)
+        reason = existing.reason
+        if incoming.reason and incoming.reason not in reason:
+            reason = f"{reason}\n--- merged reason ---\n{incoming.reason}"
+        message_ja = existing.message_ja or "過去の類似タスクに統合しました。"
+        conn.execute(
+            """
+            UPDATE research_tasks
+            SET priority = ?, reason = ?, message_ja = ?, message_en = ?, merged_from_task_ids = ?,
+                merge_reason = ?, merge_reason_ja = ?, duplicate_count = ?, last_merged_at = ?,
+                priority_before = ?, priority_after = ?
+            WHERE id = ?
+            """,
+            (
+                priority_after,
+                reason,
+                message_ja,
+                existing.message_en or existing.reason,
+                json_dumps(merged_ids),
+                merge_reason,
+                "過去の類似タスクに統合しました。",
+                existing.duplicate_count + 1,
+                now,
+                priority_before,
+                priority_after,
+                existing.id,
+            ),
+        )
+        existing.priority = priority_after
+        existing.reason = reason
+        existing.message_ja = message_ja
+        existing.merged_from_task_ids = merged_ids
+        existing.merge_reason = merge_reason
+        existing.merge_reason_ja = "過去の類似タスクに統合しました。"
+        existing.duplicate_count += 1
+        existing.last_merged_at = now
+        existing.priority_before = priority_before
+        existing.priority_after = priority_after
+        return existing
 
     @contextmanager
     def _connect(self) -> Any:
@@ -471,6 +629,19 @@ class ResearchRepository:
             reason=row["reason"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
+            message_ja=row["message_ja"],
+            message_en=row["message_en"],
+            merged_from_task_ids=[str(item) for item in json_loads_list(row["merged_from_task_ids"])],
+            merge_reason=row["merge_reason"],
+            merge_reason_ja=row["merge_reason_ja"],
+            duplicate_count=int(row["duplicate_count"] or 0),
+            last_merged_at=row["last_merged_at"],
+            priority_before=row["priority_before"],
+            priority_after=row["priority_after"],
+            blocked_reason=row["blocked_reason"],
+            blocked_reason_ja=row["blocked_reason_ja"],
+            retry_count=int(row["retry_count"] or 0),
+            last_retry_at=row["last_retry_at"],
         )
 
     def _row_to_evidence(self, row: sqlite3.Row) -> EvidenceRecord:
@@ -501,6 +672,11 @@ class ResearchRepository:
             verified_body=bool(row["verified_body"]),
             body_fetched=bool(row["body_fetched"]),
             headline_only=bool(row["headline_only"]),
+            body_fetch_error=row["body_fetch_error"],
+            headline_body_warning=row["headline_body_warning"],
+            materiality_label=row["materiality_label"],
+            horizon_label=row["horizon_label"],
+            impact_reason_ja=row["impact_reason_ja"],
             used_in_decisions=[str(item) for item in json_loads_list(row["used_in_decisions"])],
             outcome_score=row["outcome_score"],
             available_at=row["available_at"],
@@ -568,3 +744,19 @@ def persist_run_results(repository: ResearchRepository, results: Iterable[Any]) 
             repository.save_finding(finding)
         for decision in result.decisions:
             repository.save_decision_context(decision)
+
+
+def _append_only_decision_id(decision: DecisionContext) -> str:
+    timestamp = decision.created_at.replace("-", "").replace(":", "").replace("+00:00", "Z")
+    timestamp = "".join(char for char in timestamp if char.isalnum() or char in {"T", "Z"})[:18]
+    symbol = decision.target_symbol.lower().replace(".", "-")
+    return f"dc-research-{symbol}-t-{timestamp}-{uuid4().hex[:8]}"
+
+
+def _outcome_score(outcome: dict[str, Any]) -> float:
+    final = str(outcome.get("final_outcome") or "")
+    if final in {"effective_vs_benchmark", "short_term_success", "risk_reduction_success"}:
+        return 1.0
+    if final in {"short_term_failed", "missed_or_adverse"}:
+        return -1.0
+    return 0.0

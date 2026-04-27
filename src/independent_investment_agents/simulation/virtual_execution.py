@@ -25,6 +25,9 @@ class MarketSessionPolicy:
         phase = str(market_data.get("market_phase") or "closed")
         return f"Waiting for next market session; simulated fills are disabled while phase={phase}."
 
+    def waiting_note_ja(self) -> str:
+        return "市場時間外のため、仮想約定は次回セッションまで待機します。"
+
 
 class VirtualSimulationEngine:
     """Processes in-app virtual orders against historical OHLCV data."""
@@ -41,6 +44,7 @@ class VirtualSimulationEngine:
         if not self.market_session_policy.may_simulate_fill(market_data):
             order.status = OrderStatus.SCHEDULED_FOR_NEXT_SESSION
             order.notes = self.market_session_policy.waiting_note(market_data)
+            order.message_ja = self.market_session_policy.waiting_note_ja()
             return order
 
         fill_price = self._fill_price(order, market_data)
@@ -56,6 +60,11 @@ class VirtualSimulationEngine:
         slippage = round(max(0.0, notional * 0.0002), 2)
         positions = dict(after.get("positions") or {})
         current_quantity = _position_quantity(positions.get(order.symbol))
+        if order.side == "sell" and order.quantity > current_quantity:
+            order.status = OrderStatus.REJECTED_BY_RISK
+            order.notes = "Virtual sell order rejected because quantity exceeds current position."
+            order.message_ja = "保有数量を超える売却になるため、仮想売却注文を停止しました。"
+            return order
 
         if order.side == "buy":
             after["cash"] = round(float(after.get("cash", 0.0)) - notional - commission - slippage, 2)
