@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import timezone
 from pathlib import Path
 import sys
 import json
@@ -252,6 +253,46 @@ class AssetMaximizationExpansionTests(unittest.TestCase):
         )
         self.assertLessEqual(score.news_score, 0.55)
         self.assertLessEqual(score.confidence_score, 0.42)
+
+
+    def test_iso_parsers_normalize_naive_and_aware_to_utc(self) -> None:
+        from independent_investment_agents.core.watchdog import _parse_iso
+        from independent_investment_agents.performance.outcome_tracker import _parse_dt as outcome_parse_dt
+        from independent_investment_agents.research.simulation_modes import _parse_dt as sim_parse_dt
+
+        naive = "2026-01-01T09:00:00"
+        aware = "2026-01-01T09:00:00+09:00"
+
+        for parser in (_parse_iso, outcome_parse_dt, sim_parse_dt):
+            parsed_naive = parser(naive)
+            parsed_aware = parser(aware)
+            self.assertIsNotNone(parsed_naive)
+            self.assertIsNotNone(parsed_aware)
+            assert parsed_naive is not None and parsed_aware is not None
+            self.assertEqual(parsed_naive.tzinfo, timezone.utc)
+            self.assertEqual(parsed_aware.tzinfo, timezone.utc)
+
+    def test_decision_outcome_tracker_accepts_naive_created_at_and_data_as_of(self) -> None:
+        decision = {
+            "id": "dc-naive",
+            "target_symbol": "6758.T",
+            "created_at": "2026-01-01T00:00:00",
+            "data_as_of": "2026-01-01T00:00:00",
+            "side": "buy",
+            "target_value": 10_000,
+        }
+        prices = [{"time": "2026-01-01T00:00:00+00:00", "close": 100.0}, {"time": "2026-01-02T00:00:00+00:00", "close": 101.0}]
+        outcomes = DecisionOutcomeTracker().evaluate([decision], price_history_by_symbol={"6758.T": prices})
+        self.assertEqual(outcomes[0].decision_id, "dc-naive")
+
+    def test_symbol_rotation_policy_accepts_naive_next_process_at(self) -> None:
+        from independent_investment_agents.research.symbol_queue import SymbolRotationPolicy
+
+        selected = SymbolRotationPolicy().select([
+            {"symbol": "6758.T", "status": "queued", "priority": 1, "next_process_at": "2026-01-01T00:00:00"},
+            {"symbol": "7203.T", "status": "queued", "priority": 2, "next_process_at": None},
+        ], 2)
+        self.assertIn("6758.T", selected)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,13 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(cooldown_events[0].action, "cooldown")
         self.assertEqual(restarted, ["frozen"])
 
+
+
+    def test_watchdog_accepts_naive_heartbeat_timestamp(self) -> None:
+        watchdog = AgentWatchdog(heartbeat_timeout_seconds=60.0, restart_callback=lambda _agent_id: None)
+        events = watchdog.check([{"agent_id": "naive", "status": "busy", "last_heartbeat": "2026-01-01T00:00:00"}])
+        self.assertGreaterEqual(len(events), 1)
+
     def test_timeout_returns_error_result_without_blocking_other_agents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = AgentRuntime(

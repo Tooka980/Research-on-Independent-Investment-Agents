@@ -237,7 +237,7 @@ class SymbolRotationPolicy:
             if next_at and next_at > now:
                 continue
             eligible.append(item)
-        eligible.sort(key=lambda row: (_safe_int(row.get("priority"), 9999), _parse_dt(row.get("last_processed_at")) or datetime.min.replace(tzinfo=UTC)))
+        eligible.sort(key=lambda row: (_safe_int(row.get("priority"), 9999), _parse_dt(row.get("last_processed_at")) or datetime.min.replace(tzinfo=timezone.utc)))
         return [str(item.get("symbol") or "").upper() for item in eligible[: max(1, int(batch_size or 1))]]
 
 
@@ -282,5 +282,5 @@ def _parse_dt(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
