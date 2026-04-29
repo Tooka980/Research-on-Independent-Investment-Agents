@@ -9,7 +9,7 @@ import urllib.request
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -298,7 +298,7 @@ def _clean_display_value(value: Any) -> Any:
 
 
 def _tse_status(now: datetime | None = None) -> dict[str, Any]:
-    current = (now or datetime.now(UTC)).astimezone(JST)
+    current = (now or datetime.now(timezone.utc)).astimezone(JST)
     weekday = current.weekday()
     if weekday >= 5:
         return {"is_open": False, "label": "TSE 閉場中", "phase": "closed", "jst": current}
@@ -1388,13 +1388,13 @@ class DashboardService:
 
         return {
             "version": "0.0.4",
-            "generatedAt": datetime.now(UTC).isoformat(),
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
             "header": {
                 "eyebrow": "VOL.01 / PRIVATE FUND / EST.2026",
                 "titleLead": "投資",
                 "titleAccent": "Simulator",
                 "subtitle": "実際の市場価格をもとに、仮想資金のみで売買結果を観察するための投資シミュレーション環境",
-                "utc": datetime.now(UTC).strftime("%H:%M:%S"),
+                "utc": datetime.now(timezone.utc).strftime("%H:%M:%S"),
                 "jst": market["jst"].strftime("%Y/%m/%d %H:%M:%S"),
                 "marketLabel": market["label"],
                 "marketOpen": market["is_open"],
@@ -1492,7 +1492,7 @@ class DashboardService:
         return _clean_display_value(
             {
                 "ok": True,
-                "generatedAt": datetime.now(UTC).isoformat(),
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "agents": process_items,
                 "researchRuntime": research_runtime,
                 "tradingRuntime": trading_runtime,
@@ -1505,7 +1505,7 @@ class DashboardService:
         return _clean_display_value(
             {
                 "ok": True,
-                "generatedAt": datetime.now(UTC).isoformat(),
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "researchQueue": research_runtime.get("queue", {}),
                 "tradingTasks": trading_tasks,
             }
@@ -1535,7 +1535,7 @@ class DashboardService:
         return _clean_display_value(
             {
                 "ok": True,
-                "generatedAt": datetime.now(UTC).isoformat(),
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "agentId": agent_id,
                 "logDir": str(log_dir),
                 "logs": rows,
@@ -1550,7 +1550,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         if path == "/api/health":
-            self._send_json({"ok": True, "timestamp": datetime.now(UTC).isoformat()})
+            self._send_json({"ok": True, "timestamp": datetime.now(timezone.utc).isoformat()})
             return
         if path == "/api/agents":
             self._send_json(self.dashboard_service.build_agents_payload())

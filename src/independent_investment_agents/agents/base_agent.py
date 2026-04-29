@@ -4,7 +4,7 @@ import json
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ AGENT_STATUSES = {"initialized", "running", "idle", "busy", "error", "stopped", 
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _agent_id_from_name(name: str) -> str:
@@ -303,7 +303,7 @@ class BaseAgent:
             return None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        return round((datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds(), 3)
+        return round((datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds(), 3)
 
     def _write_log(self, event_type: str, payload: dict[str, Any]) -> None:
         try:

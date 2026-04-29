@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
 @dataclass(frozen=True)
 class SimulationMode:
     name: str
-    data_as_of: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    data_as_of: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -23,7 +23,7 @@ class BacktestMode(SimulationMode):
 
 class PaperLiveMode(SimulationMode):
     def __init__(self) -> None:
-        super().__init__("PaperLiveMode", datetime.now(UTC).isoformat())
+        super().__init__("PaperLiveMode", datetime.now(timezone.utc).isoformat())
 
 
 class ReplayMode(SimulationMode):
@@ -33,7 +33,7 @@ class ReplayMode(SimulationMode):
 
 class ManualResearchMode(SimulationMode):
     def __init__(self) -> None:
-        super().__init__("ManualResearchMode", datetime.now(UTC).isoformat())
+        super().__init__("ManualResearchMode", datetime.now(timezone.utc).isoformat())
 
 
 class TimestampGuard:
@@ -94,4 +94,4 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)

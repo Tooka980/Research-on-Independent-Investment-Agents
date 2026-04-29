@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
-from enum import StrEnum
+from datetime import datetime, timezone
+from enum import Enum
+
+
+class StrEnum(str, Enum):
+    pass
 from typing import Any
 from uuid import uuid4
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 class OrderStatus(StrEnum):

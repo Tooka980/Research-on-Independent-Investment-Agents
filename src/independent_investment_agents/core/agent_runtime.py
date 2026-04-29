@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -125,7 +125,7 @@ class AgentRuntime:
             event = {
                 "agent_id": agent_id,
                 "restart_count": self._restart_counts[agent_id],
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
             self._restart_history.append(event)
             current.mark_restarting()

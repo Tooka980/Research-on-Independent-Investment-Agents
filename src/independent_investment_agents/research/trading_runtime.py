@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -23,7 +23,7 @@ DEFAULT_RUNTIME_DIR = PROJECT_ROOT / "artifacts" / "agent_runtime"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _json(value: Any) -> str:
@@ -512,7 +512,7 @@ def _price_ready(context: SharedTradingContext, symbol: str) -> bool:
             return False
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        if datetime.now(UTC) - parsed.astimezone(UTC) > timedelta(days=3):
+        if datetime.now(timezone.utc) - parsed.astimezone(timezone.utc) > timedelta(days=3):
             return False
     return True
 
@@ -741,7 +741,7 @@ class AgentRuntimeEngine:
         queue: list[dict[str, Any]],
         trigger: str,
     ) -> list[AgentRuntimeState]:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         active_agent = _agent_for_task(queue[0]["task"] if queue else "")
         states: list[AgentRuntimeState] = []
         reality_layer = AgentRealityLayer()

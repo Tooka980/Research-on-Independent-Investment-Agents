@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -38,7 +38,7 @@ class DecisionOutcome:
     used_evidence_ids: list[str] = field(default_factory=list)
     related_agent_findings: list[str] = field(default_factory=list)
     contribution_to_equity: float = 0.0
-    evaluated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    evaluated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     id: str = field(default_factory=lambda: f"dout-{uuid4().hex}")
 
     def to_dict(self) -> dict[str, Any]:
@@ -271,7 +271,7 @@ class TimestampGuard:
     def valid_decision_time(self, decision: dict[str, Any]) -> bool:
         created = _parse_dt(decision.get("created_at"))
         data_as_of = _parse_dt(decision.get("data_as_of"))
-        if created and created > datetime.now(UTC) + timedelta(minutes=5):
+        if created and created > datetime.now(timezone.utc) + timedelta(minutes=5):
             return False
         if created and data_as_of and data_as_of > created + timedelta(minutes=5):
             return False
@@ -317,7 +317,7 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)
 
 
 def _safe_float(value: Any) -> float | None:

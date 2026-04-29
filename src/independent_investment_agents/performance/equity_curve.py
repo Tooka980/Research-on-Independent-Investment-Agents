@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -13,7 +13,7 @@ class EquityPoint:
     equity: float
     cash: float
     holdings_value: float
-    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     id: str = field(default_factory=lambda: f"eq-{uuid4().hex}")
 
     def to_dict(self) -> dict[str, Any]:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -32,7 +32,7 @@ class UniverseCandidate:
     risk_notes_ja: list[str] = field(default_factory=list)
     required_followup: list[str] = field(default_factory=list)
     required_followup_ja: list[str] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     id: str = field(default_factory=lambda: f"ucand-{uuid4().hex}")
 
     def to_dict(self) -> dict[str, Any]:
