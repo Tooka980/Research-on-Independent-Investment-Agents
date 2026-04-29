@@ -19,8 +19,11 @@ from independent_investment_agents.performance import (
     calculate_performance_metrics,
 )
 from independent_investment_agents.research import AgentRunContext, ResearchOrganization, ResearchRepository
+from independent_investment_agents.research.agents import NewsIntelligenceAgent
 from independent_investment_agents.research.evidence_quality import EvidenceDeduplicator, EvidenceQualityPolicy
 from independent_investment_agents.research.models import EvidenceRecord, ResearchTask as StoredResearchTask, utc_now_iso
+from independent_investment_agents.research.news_analysis import NewsArticleAnalyzer
+from independent_investment_agents.research.scoring import MultiFactorScoringEngine
 from independent_investment_agents.research.simulation_modes import BacktestMode, LookAheadBiasChecker
 from independent_investment_agents.research.symbol_queue import build_symbol_processing_plan
 from independent_investment_agents.research.trading_runtime import AgentRuntimeEngine, SharedTradingContext
@@ -222,6 +225,33 @@ class AssetMaximizationExpansionTests(unittest.TestCase):
         self.assertIn("maxDrawdownPct", metrics)
         self.assertIn("benchmarkExcessReturnPct", metrics)
         self.assertGreater(metrics["portfolioEquity"], 0)
+
+    def test_news_article_analyzer_failed_fetch_is_headline_only(self) -> None:
+        result = NewsArticleAnalyzer().analyze(title="Test headline", url="https://invalid.invalid/not-found")
+        self.assertTrue(result.headline_only)
+        self.assertFalse(result.body_fetched)
+
+    def test_news_without_url_skips_body_fetch_and_remains_headline_only(self) -> None:
+        context = AgentRunContext(
+            focus_symbol="6758.T",
+            market={"phase": "open"},
+            focus={"quote": {}, "dataQuality": {}},
+            portfolio={"cash": 100000, "equity": 100000},
+            news_items=[{"source": "Google News", "title": "見出しのみニュース", "url_missing": True}],
+            watchlist=[],
+        )
+        output = NewsIntelligenceAgent().run(context)
+        self.assertTrue(output.evidence[0].headline_only)
+        self.assertFalse(output.evidence[0].body_fetched)
+
+    def test_headline_only_news_caps_news_and_confidence_score(self) -> None:
+        score = MultiFactorScoringEngine().score(
+            symbol_payload={"quote": {"changePct": 1.0}, "metrics": {}},
+            portfolio_state={"cash": 1000, "equity": 1000},
+            evidence_refs=[{"id": "news-1", "headline_only": True, "body_fetched": False, "credibility_score": 1.0, "impact_score": 1.0}],
+        )
+        self.assertLessEqual(score.news_score, 0.55)
+        self.assertLessEqual(score.confidence_score, 0.42)
 
 
 if __name__ == "__main__":
