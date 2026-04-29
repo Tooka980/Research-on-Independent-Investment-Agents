@@ -20,6 +20,7 @@ from independent_investment_agents.research.models import (
     ResearchTask,
     utc_now_iso,
 )
+from independent_investment_agents.research.news_analysis import NewsArticleAnalyzer, NewsImpactScorer
 from independent_investment_agents.research.repository import ResearchRepository, persist_run_results
 from independent_investment_agents.research.scoring import (
     ExpectedReturnModel,
@@ -181,34 +182,54 @@ class NewsIntelligenceAgent(ResearchAgent):
 
     def run(self, context: AgentRunContext) -> AgentRunResult:
         evidence: list[EvidenceRecord] = []
+        logs: list[str] = []
         symbol = context.focus_symbol
+        analyzer = NewsArticleAnalyzer()
+        impact_scorer = NewsImpactScorer()
         real_items = [
             item for item in context.news_items[:3]
             if item.get("title") and item.get("source") not in {"News Agent", "Cache"}
         ]
         for idx, item in enumerate(real_items):
             source_name = str(item.get("source") or "RSS")
+            url = str(item.get("url") or "")
+            analysis = analyzer.analyze(title=str(item.get("title") or f"{symbol} news"), url=url) if url else None
+            if analysis and analysis.body_fetched:
+                logs.append("ニュース本文を取得しました。")
+            elif analysis and not analysis.body_fetched:
+                logs.append("ニュース本文を取得できなかったため、見出しのみの根拠として扱います。")
+            elif not url:
+                logs.append("URLがないため、見出しのみの根拠として扱います。")
+            if analysis and analysis.mismatch_warning:
+                logs.append("見出しと本文のトーンが異なる可能性があります。")
+            base_impact = impact_scorer.score(analysis) if analysis else 0.42
             evidence.append(
                 EvidenceQualityPolicy().apply(EvidenceRecord(
                     id=f"ev-rss-news-{symbol.lower().replace('.', '-')}-{utc_now_iso()[:10].replace('-', '')}-{idx}",
                     source_type="news",
                     source_name=source_name,
-                    url_or_path=str(item.get("url") or f"rss://{source_name}/{symbol}/{idx}"),
+                    url_or_path=url or f"rss://{source_name}/{symbol}/{idx}",
                     title=str(item.get("title") or f"{symbol} news"),
                     published_at=None,
                     collected_at=utc_now_iso(),
                     related_symbols=[symbol],
                     related_topics=["news", "market_sentiment"],
                     raw_text_path=None,
-                    summary=str(item.get("summary") or "headline stored for research context"),
+                    summary=str((analysis.summary if analysis else "") or item.get("summary") or "headline stored for research context"),
                     extracted_facts=[str(item.get("title") or "headline")],
                     sentiment_score=0.0,
                     relevance_score=0.72,
                     credibility_score=0.58 if item.get("source") == "News Agent" else 0.76,
                     freshness_score=0.94,
-                    impact_score={"High": 0.9, "Medium": 0.64, "Low": 0.35}.get(str(item.get("impact")), 0.5),
-                    body_fetched=False,
-                    headline_only=True,
+                    impact_score=base_impact,
+                    body_fetched=bool(analysis.body_fetched) if analysis else False,
+                    headline_only=not bool(analysis.body_fetched) if analysis else True,
+                    body_fetch_error="" if (analysis and analysis.body_fetched) else "本文未取得",
+                    headline_body_warning=analysis.mismatch_warning if analysis else "",
+                    materiality_label=analysis.materiality if analysis else "unknown",
+                    horizon_label=analysis.horizon if analysis else "unknown",
+                    impact_reason_ja="本文確認済みニュースを優先して影響度を評価しました。" if analysis and analysis.body_fetched else "見出しベースのため影響度を控えめに評価しました。",
+                    verified_body=bool(analysis.body_fetched) if analysis else False,
                 ))
             )
         finding = AgentFinding(
@@ -222,7 +243,7 @@ class NewsIntelligenceAgent(ResearchAgent):
             suggested_actions=["score impact", "check duplicate headlines"],
         )
         if evidence:
-            return AgentRunResult(self.name, "success", ["news evidence normalized", "impact scored"], [], evidence, [finding])
+            return AgentRunResult(self.name, "success", logs or ["ニュース根拠を保存しました。"], [], evidence, [finding])
         task = ResearchTask(
             task_type="news_collection",
             target_symbols=[symbol],

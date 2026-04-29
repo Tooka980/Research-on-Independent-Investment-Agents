@@ -433,7 +433,25 @@ class DashboardService:
                             time_label = datetime.fromtimestamp(published, JST).strftime("%H:%M:%S")
                         else:
                             time_label = datetime.now(JST).strftime("%H:%M:%S")
-                        items.append({"time": time_label, "source": str(provider), "title": str(title), "summary": "yfinance のニュース取得結果を監視キューに追加しました。", "impact": "Medium"})
+                        content = raw.get("content", {}) if isinstance(raw.get("content"), dict) else {}
+                        canonical = content.get("canonicalUrl") or {}
+                        click = content.get("clickThroughUrl") or {}
+                        item_url = (
+                            raw.get("link")
+                            or content.get("link")
+                            or (canonical.get("url") if isinstance(canonical, dict) else canonical)
+                            or (click.get("url") if isinstance(click, dict) else click)
+                            or ""
+                        )
+                        items.append({
+                            "time": time_label,
+                            "source": str(provider),
+                            "title": str(title),
+                            "summary": "yfinance のニュース取得結果を監視キューに追加しました。",
+                            "impact": "Medium",
+                            "url": str(item_url) if item_url else "",
+                            "url_missing": not bool(item_url),
+                        })
                 except Exception:
                     items = []
             if len(items) >= 3:
@@ -461,7 +479,16 @@ class DashboardService:
                     if not title:
                         continue
                     time_label = published[17:25] if len(published) >= 25 else datetime.now(JST).strftime("%H:%M:%S")
-                    items.append({"time": time_label, "source": source, "title": title, "summary": "Google News RSS から取得した関連見出しです。詳細検証は次回判断ログに回します。", "impact": "Medium"})
+                    link = (node.findtext("link") or "").strip()
+                    items.append({
+                        "time": time_label,
+                        "source": source,
+                        "title": title,
+                        "summary": "Google News RSS から取得した関連見出しです。詳細検証は次回判断ログに回します。",
+                        "impact": "Medium",
+                        "url": link,
+                        "url_missing": not bool(link),
+                    })
             except Exception:
                 pass
             return items[:3]
