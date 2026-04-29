@@ -181,6 +181,7 @@ class DecisionContext:
     reason: str = ""
     bullish_reasons: list[str] = field(default_factory=list)
     bearish_reasons: list[str] = field(default_factory=list)
+    unknowns: list[str] = field(default_factory=list)
     counterarguments: list[str] = field(default_factory=list)
     invalidation_conditions: list[str] = field(default_factory=list)
     alternative_scenarios: list[str] = field(default_factory=list)
@@ -189,6 +190,14 @@ class DecisionContext:
     stop_loss_plan: str = ""
     take_profit_plan: str = ""
     position_size_reason: str = ""
+    reason_ja: str = ""
+    bullish_reasons_ja: list[str] = field(default_factory=list)
+    bearish_reasons_ja: list[str] = field(default_factory=list)
+    invalidation_conditions_ja: list[str] = field(default_factory=list)
+    red_team_warnings: list[str] = field(default_factory=list)
+    red_team_score: float | None = None
+    should_downgrade: bool = False
+    downgrade_reason_ja: str = ""
     expected_return: float | None = None
     expected_risk: float | None = None
     risk_reward_ratio: float | None = None
@@ -206,10 +215,15 @@ class DecisionContext:
             "missing_information",
             "bullish_reasons",
             "bearish_reasons",
+            "unknowns",
             "counterarguments",
             "invalidation_conditions",
             "alternative_scenarios",
             "what_would_change_our_mind",
+            "bullish_reasons_ja",
+            "bearish_reasons_ja",
+            "invalidation_conditions_ja",
+            "red_team_warnings",
         ]:
             data[key] = _list(data.get(key))
         data["target_symbol"] = str(data.get("target_symbol", "")).upper()

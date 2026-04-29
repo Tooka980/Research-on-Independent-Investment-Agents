@@ -9,7 +9,7 @@ from independent_investment_agents.agents.base_agent import BaseAgent
 from independent_investment_agents.core.agent_runtime import AgentRuntime, AgentRuntimeConfig, load_agent_runtime_config
 from independent_investment_agents.core.task_queue import ErrorResult, TaskEnvelope, retry_call
 from independent_investment_agents.research.llm_provider import TemplateLanguageProvider
-from independent_investment_agents.research.decision_review import BearishCaseAnalyzer, InvalidationConditionBuilder
+from independent_investment_agents.research.decision_review import BearishCaseAnalyzer, DecisionRedTeamAgent, InvalidationConditionBuilder
 from independent_investment_agents.research.evidence_quality import EvidenceQualityPolicy
 from independent_investment_agents.research.models import (
     AgentFinding,
@@ -370,6 +370,10 @@ class StrategySynthesisAgent(ResearchAgent):
     name = "Strategy Synthesis Agent"
     division = "Strategy"
 
+    def __init__(self, repository: ResearchRepository | None = None) -> None:
+        super().__init__()
+        self.repository = repository
+
     def run(self, context: AgentRunContext) -> AgentRunResult:
         symbol = context.focus_symbol
         quote = context.focus.get("quote", {})
@@ -407,10 +411,18 @@ class StrategySynthesisAgent(ResearchAgent):
                 suggested_actions=["collect OHLCV evidence", "collect company or news evidence"],
             )
             return AgentRunResult(self.name, "waiting", ["EvidenceGate blocked DecisionContext", "research task queued"], [task], [], [finding], [])
+        evidence_payloads: list[dict[str, Any]] = []
+        if self.repository is not None:
+            for record in self.repository.list_evidence(limit=200):
+                if symbol not in record.related_symbols:
+                    continue
+                if record.available_at and record.available_at > utc_now_iso():
+                    continue
+                evidence_payloads.append(record.to_dict())
         score = MultiFactorScoringEngine().score(
             symbol_payload=context.focus,
             portfolio_state=context.portfolio,
-            evidence_refs=evidence_ids,
+            evidence_refs=evidence_payloads or evidence_ids,
         )
         expected_return = ExpectedReturnModel().estimate(score)
         expected_risk = max(0.03, min(0.16, score.risk_score * 0.12))
@@ -429,6 +441,8 @@ class StrategySynthesisAgent(ResearchAgent):
         )
         side = "buy"
         decision_type = "buy_candidate" if score.total_score >= 0.52 else "small_buy_candidate"
+        if evidence_payloads and all(item.get("headline_only") for item in evidence_payloads if item.get("source_type") == "news"):
+            decision_type = "research_more" if decision_type == "buy_candidate" else decision_type
         order_type = "rebalance"
         if score.total_score < 0.42 or risk_reward < 1.0:
             decision_type = "research_more"
@@ -468,8 +482,10 @@ class StrategySynthesisAgent(ResearchAgent):
             target_value=target_value,
             stop_price=stop_price,
             reason="Evidence-backed virtual capital growth policy candidate; not investment advice.",
+            reason_ja="エビデンスに基づく仮想資産成長の候補判断です（投資助言ではありません）。",
             bullish_reasons=bullish_reasons,
             bearish_reasons=bearish_reasons,
+            unknowns=score.missing_information,
             counterarguments=bearish_reasons,
             invalidation_conditions=invalidation_conditions,
             alternative_scenarios=["watch_only if evidence weakens", "research_more if source reliability falls"],
@@ -478,6 +494,9 @@ class StrategySynthesisAgent(ResearchAgent):
             stop_loss_plan=stop_loss_plan,
             take_profit_plan=take_profit_plan,
             position_size_reason=size_reason,
+            bullish_reasons_ja=["総合スコアが閾値を上回っています。", "キャッシュ比率を考慮したポジションサイズです。"],
+            bearish_reasons_ja=["短期変動による下振れリスクに注意します。"],
+            invalidation_conditions_ja=["根拠の鮮度・信頼性が低下した場合は前提を取り下げます。", *invalidation_conditions],
             expected_return=expected_return,
             expected_risk=expected_risk,
             risk_reward_ratio=risk_reward,
@@ -493,7 +512,11 @@ class StrategySynthesisAgent(ResearchAgent):
             limitations=["rule-based evidence weights are used until local LLM review is connected"],
             suggested_actions=["send to Virtual Order Agent", "record decision trace"],
         )
-        return AgentRunResult(self.name, "success", ["evidence merged", "DecisionContext emitted"], [], [], [finding], [decision])
+        red_team = DecisionRedTeamAgent()
+        reviewed = red_team.review(decision.to_dict())
+        decision = DecisionContext.from_dict(reviewed)
+        logs = ["市場フェーズを確認しました。", "Evidenceを統合しました。", "RedTeamAgentが弱気材料を検出しました。"] if reviewed.get("should_downgrade") else ["市場フェーズを確認しました。", "Evidenceを統合しました。"]
+        return AgentRunResult(self.name, "success", logs, [], [], [finding], [decision])
 
 
 class AgentChatCoordinator(ResearchAgent):
@@ -563,7 +586,7 @@ class ResearchOrganization:
             CompanyResearchAgent(),
             AcademicMacroResearchAgent(),
             EvidenceCuratorAgent(),
-            StrategySynthesisAgent(),
+            StrategySynthesisAgent(repository),
             AgentChatCoordinator(),
         ]
         self.runtime = AgentRuntime(self.config)
