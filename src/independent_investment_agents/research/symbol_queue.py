@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -205,7 +205,7 @@ class SymbolProcessingStore:
                 row["status_ja"] = STATUS_JA["failed"]
                 row["last_error"] = error
                 row["retry_count"] = _safe_int(row.get("retry_count"), 0) + 1
-                row["next_process_at"] = (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
+                row["next_process_at"] = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
                 row["last_processed_at"] = now
         self.repository.write_items(rows)
 
@@ -227,7 +227,7 @@ class SymbolProcessingStore:
 
 class SymbolRotationPolicy:
     def select(self, items: list[dict[str, Any]], batch_size: int) -> list[str]:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         eligible = []
         for item in items:
             status = str(item.get("status") or "queued")
@@ -271,7 +271,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -283,4 +283,4 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)

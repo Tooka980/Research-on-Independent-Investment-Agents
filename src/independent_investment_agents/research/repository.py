@@ -110,7 +110,6 @@ class ResearchRepository:
                     "available_at": "TEXT",
                 },
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_symbol_created ON decision_contexts(target_symbol, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_hash ON evidence_records(evidence_hash)")
             conn.execute(
                 """
@@ -173,6 +172,7 @@ class ResearchRepository:
                     "data_as_of": "TEXT",
                 },
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_symbol_created ON decision_contexts(target_symbol, created_at)")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS knowledge_memory (
@@ -264,7 +264,7 @@ class ResearchRepository:
                     horizon_label, impact_reason_ja, used_in_decisions, outcome_score, available_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (

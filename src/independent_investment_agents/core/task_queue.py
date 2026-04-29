@@ -4,13 +4,13 @@ import queue
 import threading
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _safe_payload(value: Any) -> Any:

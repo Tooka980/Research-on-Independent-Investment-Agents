@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -15,7 +15,7 @@ class TaskMergeDecision:
 class TaskDeduplicator:
     def is_duplicate(self, new_task: Any, existing_tasks: list[Any], *, within_minutes: int = 120) -> TaskMergeDecision:
         new_key = self._key(new_task)
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         for task in existing_tasks:
             if self._key(task) != new_key:
                 continue
@@ -34,7 +34,7 @@ class TaskTTL:
         created = _parse_dt(_get(task, "created_at"))
         if not created:
             return str(_get(task, "status") or "open")
-        age = datetime.now(UTC) - created
+        age = datetime.now(timezone.utc) - created
         if age >= timedelta(hours=blocked_hours):
             return "blocked"
         if age >= timedelta(hours=stale_hours):
@@ -74,4 +74,4 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)

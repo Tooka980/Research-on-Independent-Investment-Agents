@@ -3,12 +3,12 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -20,7 +20,7 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parsed.astimezone(timezone.utc)
 
 
 @dataclass
@@ -62,7 +62,7 @@ class AgentWatchdog:
         self._lock = threading.RLock()
 
     def check(self, agent_snapshots: Iterable[dict[str, Any]]) -> list[WatchdogEvent]:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         emitted: list[WatchdogEvent] = []
         for snapshot in agent_snapshots:
             agent_id = str(snapshot.get("agent_id") or "")

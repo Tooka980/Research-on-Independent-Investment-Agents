@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -67,7 +67,7 @@ class AgentRuntimeTests(unittest.TestCase):
             max_restart_count=2,
             restart_callback=restarted.append,
         )
-        stale_at = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        stale_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
         events = watchdog.check([{"agent_id": "frozen", "status": "busy", "last_heartbeat": stale_at}])
         cooldown_events = watchdog.check([{"agent_id": "frozen", "status": "busy", "last_heartbeat": stale_at}])
         self.assertEqual(events[0].action, "restart")

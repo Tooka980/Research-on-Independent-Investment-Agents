@@ -91,8 +91,8 @@ __all__ = [
     "TradingConsensus",
     "build_symbol_processing_plan",
     "build_shared_trading_context",
-]
     "HeadlineBodyMismatchChecker",
     "MaterialityClassifier",
     "NewsImpactScorer",
     "ShortTermLongTermClassifier",
+]
