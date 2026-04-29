@@ -18,8 +18,16 @@ class DecisionRedTeamAgent:
             blocked_reasons.append("missing_stop_loss_plan")
         if _is_actionable(decision) and not take_profit:
             blocked_reasons.append("missing_take_profit_plan")
+        warnings: list[str] = []
+        if decision.get("decision_type") in {"buy_candidate", "small_buy_candidate"} and not decision.get("related_evidence_ids"):
+            warnings.append("Evidence不足です。")
+        if blocked_reasons:
+            warnings.extend(blocked_reasons)
         reviewed = dict(decision)
-        reviewed["review_blocked_reasons"] = blocked_reasons
+        reviewed["red_team_warnings"] = warnings
+        reviewed["red_team_score"] = max(0.0, min(1.0, 1.0 - 0.2 * len(warnings)))
+        reviewed["should_downgrade"] = bool(blocked_reasons)
+        reviewed["downgrade_reason_ja"] = "リスク計画または反証条件が不十分です。" if blocked_reasons else ""
         if blocked_reasons:
             reviewed["decision_type"] = "blocked"
             reviewed["side"] = "hold"
