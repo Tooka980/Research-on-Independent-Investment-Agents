@@ -67,7 +67,9 @@ class AssetMaximizationExpansionTests(unittest.TestCase):
         self.assertEqual(plan.total_unique_symbols, 25)
         self.assertEqual(len(plan.processing_symbols), 8)
         self.assertEqual(len(plan.pending_symbols), 17)
-        self.assertTrue({item.status for item in plan.queue}.issuperset({"completed", "pending"}))
+        self.assertTrue({item.status for item in plan.queue}.issuperset({"selected", "queued"}))
+        self.assertIn("2000.T", plan.processing_symbols + plan.pending_symbols)
+        self.assertIn("1019.T", plan.processing_symbols + plan.pending_symbols)
 
     def test_positions_json_loads_all_rows_without_limit(self) -> None:
         from independent_investment_agents.app import web_dashboard
