@@ -302,7 +302,7 @@ class BaseAgent:
         except ValueError:
             return None
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.replace(tzinfo=timezone.utc)
         return round((datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds(), 3)
 
     def _write_log(self, event_type: str, payload: dict[str, Any]) -> None:

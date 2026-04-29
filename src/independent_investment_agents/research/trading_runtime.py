@@ -511,7 +511,7 @@ def _price_ready(context: SharedTradingContext, symbol: str) -> bool:
         except ValueError:
             return False
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) - parsed.astimezone(timezone.utc) > timedelta(days=3):
             return False
     return True
