@@ -93,18 +93,33 @@ class ExecutionSimulator:
     def __init__(self) -> None:
         self.partial_fill = PartialFillModel()
 
+    @staticmethod
+    def _candle_float(candle: dict[str, Any], key: str) -> float | None:
+        value = candle.get(key)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def trigger_price(self, order: VirtualOrderRequest, candle: dict[str, Any]) -> float | None:
-        high, low = float(candle.get("high", 0.0)), float(candle.get("low", 0.0))
-        close = float(candle.get("close", 0.0))
+        high = self._candle_float(candle, "high")
+        low = self._candle_float(candle, "low")
+        close = self._candle_float(candle, "close")
         if order.order_type in {"market", "rebalance", "partial_sell", "risk_reduction"}:
             return close
         if order.order_type == "limit":
+            if low is None or high is None:
+                return None
             if order.side == "buy" and order.limit_price is not None and low <= order.limit_price:
                 return order.limit_price
             if order.side == "sell" and order.limit_price is not None and high >= order.limit_price:
                 return order.limit_price
             return None
         if order.order_type == "stop":
+            if low is None or high is None:
+                return None
             if order.side == "sell" and order.stop_price is not None and low <= order.stop_price:
                 return order.stop_price
             if order.side == "buy" and order.stop_price is not None and high >= order.stop_price:

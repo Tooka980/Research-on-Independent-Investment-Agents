@@ -38,6 +38,20 @@ def test_commission_slippage_average_cost_and_pnl_and_sell_rejection() -> None:
     assert rejected.status == "rejected"
 
 
+def test_reject_when_required_candle_prices_are_missing() -> None:
+    broker = VirtualBroker()
+
+    no_close = broker.submit(VirtualOrderRequest(symbol="7203.T", side="buy", order_type="market", quantity=10), {"high": 1010, "low": 995}, market_is_open=True)
+    assert no_close.status == "pending"
+    assert no_close.execution_price == 0.0
+
+    no_low_for_limit_buy = broker.submit(VirtualOrderRequest(symbol="7203.T", side="buy", order_type="limit", quantity=10, limit_price=1000), {"high": 1010, "close": 1005}, market_is_open=True)
+    assert no_low_for_limit_buy.status == "pending"
+
+    no_high_for_stop_buy = broker.submit(VirtualOrderRequest(symbol="7203.T", side="buy", order_type="stop", quantity=10, stop_price=1000), {"low": 990, "close": 995}, market_is_open=True)
+    assert no_high_for_stop_buy.status == "pending"
+
+
 def test_agent_intelligence_and_self_eval_and_committee() -> None:
     assert "trend" in MarketStructureAgent().analyze({"changePct": 1.2, "volume": 100, "volatility": 0.2})["findings"]
     assert NewsReasoningAgent().analyze({"body_fetched": False})["findings"]["見出しのみ"] is True
