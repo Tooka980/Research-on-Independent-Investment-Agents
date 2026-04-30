@@ -35,6 +35,15 @@ from independent_investment_agents.research import (
 )
 from independent_investment_agents.repositories.virtual_order_repository import VirtualOrderRepository
 from independent_investment_agents.simulation.virtual_execution import VirtualSimulationEngine
+from independent_investment_agents.research.advanced_agents import (
+    AgentTrustScoreManager,
+    DecisionPatternMemory,
+    EvidenceReliabilityMemory,
+    FactorWeightProfileManager,
+    FinalApprovalGate,
+    InvestmentCommittee,
+    SelfReflectionReport,
+)
 from independent_investment_agents.performance import (
     AgentContributionScorer,
     DecisionContributionCalculator,
@@ -335,6 +344,10 @@ class DashboardService:
         self.decision_outcome_tracker = DecisionOutcomeTracker()
         self.universe_manager = UniverseManager()
         self.symbol_queue_store = SymbolProcessingStore(SymbolQueueRepository(SYMBOL_QUEUE_FILE))
+        self.agent_trust_scores = AgentTrustScoreManager()
+        self.factor_weight_profiles = FactorWeightProfileManager()
+        self.evidence_reliability_memory = EvidenceReliabilityMemory()
+        self.decision_pattern_memory = DecisionPatternMemory()
 
     def _load_session(self) -> dict[str, Any]:
         if SESSION_FILE.exists():
@@ -1107,6 +1120,159 @@ class DashboardService:
             )
         return items
 
+    def _build_learning_outputs(
+        self,
+        *,
+        current_cash: float,
+        holdings_rows: list[dict[str, Any]],
+        decision_outcomes: list[dict[str, Any]],
+        evidence_records: list[dict[str, Any]],
+        virtual_order_desk: dict[str, Any],
+        trading_consensus: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw_executions = self.virtual_order_repository.read_executions(limit=100)
+        raw_orders = self.virtual_order_repository.read_orders(limit=100)
+        executions_by_order = {str(item.get("order_id")): item for item in raw_executions}
+
+        trade_ledger: list[dict[str, Any]] = []
+        for execution in raw_executions:
+            trade_ledger.append(
+                {
+                    "order_id": execution.get("order_id"),
+                    "execution_id": execution.get("id"),
+                    "symbol": execution.get("symbol"),
+                    "side": execution.get("side"),
+                    "quantity": execution.get("quantity"),
+                    "execution_price": execution.get("execution_price"),
+                    "commission": execution.get("commission"),
+                    "slippage": execution.get("slippage"),
+                    "status": "filled",
+                    "message_ja": "既存の仮想約定履歴をTradeLedger形式で表示しています。",
+                    "executed_at": execution.get("executed_at"),
+                }
+            )
+        for order in raw_orders:
+            order_id = str(order.get("id"))
+            if order_id in executions_by_order:
+                continue
+            status = str(order.get("status") or "pending")
+            if status in {"proposed", "approved_for_simulation", "scheduled_for_next_session"}:
+                status = "pending"
+            trade_ledger.append(
+                {
+                    "order_id": order_id,
+                    "execution_id": None,
+                    "symbol": order.get("symbol"),
+                    "side": order.get("side"),
+                    "quantity": 0.0,
+                    "requested_price": order.get("expected_price"),
+                    "execution_price": 0.0,
+                    "commission": 0.0,
+                    "slippage": 0.0,
+                    "status": status,
+                    "message_ja": "未約定または検証中の仮想注文です。実注文APIには接続していません。",
+                    "created_at": order.get("created_at"),
+                }
+            )
+
+        position_ledger = [
+            {
+                "symbol": row.get("symbol"),
+                "quantity": row.get("quantity"),
+                "average_cost": row.get("averageCost") or row.get("average_cost"),
+                "market_value": round(float(row.get("value") or 0.0), 2),
+                "unrealized_pnl": round(float(row.get("pnl") or 0.0), 2),
+                "realized_pnl": 0.0,
+                "sector": row.get("sector"),
+                "message_ja": "DashboardServiceの保有一覧をPositionLedger形式で返しています。",
+            }
+            for row in holdings_rows
+        ]
+
+        enriched_outcomes = []
+        for outcome in decision_outcomes:
+            enriched = dict(outcome)
+            if not enriched.get("agent_name"):
+                related_findings = enriched.get("related_agent_findings") or []
+                enriched["agent_name"] = str(related_findings[0]) if related_findings else "Strategy Synthesis Agent"
+            if not enriched.get("factor_name"):
+                used_evidence = enriched.get("used_evidence_ids") or []
+                enriched["factor_name"] = "news" if used_evidence else "strategy"
+            enriched_outcomes.append(enriched)
+
+        agent_scorecards = self.agent_trust_scores.scorecards(enriched_outcomes)
+        factor_weight_profile = self.factor_weight_profiles.suggest(enriched_outcomes)
+        evidence_reliability = self.evidence_reliability_memory.suggest(enriched_outcomes)
+        decision_pattern_memory = self.decision_pattern_memory.summarize(enriched_outcomes)
+        self_reflection_report = SelfReflectionReport().generate(enriched_outcomes)
+
+        red_team_warnings: list[str] = []
+        for risk in virtual_order_desk.get("riskChecks", []) or []:
+            if isinstance(risk, dict):
+                red_team_warnings.extend(str(item) for item in risk.get("warnings", []) or [])
+                red_team_warnings.extend(str(item) for item in risk.get("failed_rules", []) or [])
+
+        votes = [
+            {
+                "agent_name": card["agent_name"],
+                "vote": "approve" if float(card["trust_score"]) >= 0.45 else "research_more",
+                "confidence": max(0.35, min(0.9, float(card["trust_score"]))),
+                "trust_score": card["trust_score"],
+                "reason_ja": card["suggestion_ja"],
+            }
+            for card in agent_scorecards[:4]
+        ]
+        if not votes:
+            votes.append(
+                {
+                    "agent_name": "TradingConsensus",
+                    "vote": "approve" if trading_consensus.get("status") == "approved_for_virtual_order" else "research_more",
+                    "confidence": 0.5,
+                    "trust_score": 0.5,
+                    "reason_ja": str(trading_consensus.get("reason") or "合議候補の蓄積待ちです。"),
+                }
+            )
+        committee_decision = InvestmentCommittee().decide(
+            votes,
+            context={
+                "execution_ready": trading_consensus.get("status") in {"approved_for_virtual_order", "needs_review", None},
+                "red_team_critical": any("重大" in warning for warning in red_team_warnings),
+                "proposed_decision": "buy_candidate",
+            },
+        )
+        final_gate = FinalApprovalGate().review(
+            {
+                "evidence_ok": bool(evidence_records) or bool(trading_consensus.get("selected_proposal")),
+                "execution_ready": bool(committee_decision.get("order_allowed")),
+                "stop_loss_plan": not any("stop_loss" in warning for warning in red_team_warnings),
+                "take_profit_plan": not any("take_profit" in warning for warning in red_team_warnings),
+                "red_team_critical": any("重大" in warning for warning in red_team_warnings),
+                "red_team_warnings": red_team_warnings,
+            }
+        )
+
+        return _clean_display_value(
+            {
+                "tradeLedger": trade_ledger[-100:],
+                "positionLedger": position_ledger,
+                "cashLedger": {
+                    "balance": round(current_cash, 2),
+                    "available_cash": round(current_cash, 2),
+                    "message_ja": "Dashboardの現金残高をCashLedger表示用に返しています。",
+                },
+                "agentScorecards": agent_scorecards,
+                "selfReflectionReport": self_reflection_report,
+                "committeeDecision": committee_decision,
+                "redTeamWarnings": red_team_warnings,
+                "finalApprovalGate": final_gate,
+                "factorWeightProfile": factor_weight_profile,
+                "evidenceReliabilityMemory": evidence_reliability,
+                "decisionPatternMemory": decision_pattern_memory,
+                "autoApplied": False,
+                "message_ja": "自己評価と重み調整は自動反映せず、UI表示用のsuggestionとして保存しています。",
+            }
+        )
+
     def build_dashboard_payload(self, focus_symbol: str = "6758.T", range_key: str = "3mo", watch_symbols: list[str] | None = None) -> dict[str, Any]:
         market = _tse_status()
         stored_watch_symbols = _load_watch_symbols()
@@ -1385,6 +1551,14 @@ class DashboardService:
             runtime_snapshot=runtime_snapshot,
             virtual_order_desk=virtual_order_desk,
         )
+        learning_outputs = self._build_learning_outputs(
+            current_cash=current_cash,
+            holdings_rows=holdings_rows,
+            decision_outcomes=decision_outcomes,
+            evidence_records=evidence_records,
+            virtual_order_desk=virtual_order_desk,
+            trading_consensus=trading_consensus,
+        )
 
         return {
             "version": "0.0.4",
@@ -1451,6 +1625,18 @@ class DashboardService:
             },
             "allocation": allocation_rows,
             "positions": holdings_rows,
+            "tradeLedger": learning_outputs["tradeLedger"],
+            "positionLedger": learning_outputs["positionLedger"],
+            "cashLedger": learning_outputs["cashLedger"],
+            "agentScorecards": learning_outputs["agentScorecards"],
+            "selfReflectionReport": learning_outputs["selfReflectionReport"],
+            "committeeDecision": learning_outputs["committeeDecision"],
+            "redTeamWarnings": learning_outputs["redTeamWarnings"],
+            "finalApprovalGate": learning_outputs["finalApprovalGate"],
+            "factorWeightProfile": learning_outputs["factorWeightProfile"],
+            "evidenceReliabilityMemory": learning_outputs["evidenceReliabilityMemory"],
+            "decisionPatternMemory": learning_outputs["decisionPatternMemory"],
+            "learningSuggestions": learning_outputs,
             "analysis": focus["analysis"],
             "processStatus": process_items,
             "intelligenceFeed": intelligence_feed,
